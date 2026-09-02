@@ -2,7 +2,7 @@
 
 **Owner:** Windows Server Operator; GitHub publication requires Owner approval | **Frequency:** As needed, once per target server build | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
 
-**Document version:** 1.0 | **Source language:** Thai | **Thai source:** [windows-phase7-operator-guide.th.md](windows-phase7-operator-guide.th.md), version 1.0
+**Document version:** 1.1 | **Source language:** Thai | **Thai source:** [windows-phase7-operator-guide.th.md](windows-phase7-operator-guide.th.md), version 1.1
 
 > This is a Phase 7 operational guide only. Writing or reading it is not evidence that Windows, an NVIDIA GPU, ComfyUI, Hunyuan3D, or a GLB result has passed.
 
@@ -26,9 +26,63 @@ Read these before changing files or installing software:
 
 When an external video or README conflicts with these artifacts, the project artifacts and owner-approved decisions govern.
 
+## Scope boundary (read before starting)
+
+Phase 7 proves **runtime compatibility only**. It is not model quality and it is not deployment.
+
+**In scope for Phase 7:** T058–T064 — inventory, pinned install, compatibility checks, native shape smoke, manifest verification, checklist, and gate verdict.
+
+**Out of scope — do not do these in this phase:**
+
+| Topic | Status | Reason |
+|---|---|---|
+| SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | Reference only. Never add to the MVP workflow, dependencies, or task completion criteria. |
+| Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | Manual post-MVP work, not part of the FastAPI/ComfyUI pipeline. |
+| Textured-GLB acceptance, FastAPI-to-ComfyUI integration | Phase 8 and later | A passing shape smoke does not count as MVP acceptance. |
+| LAN, Caddy, firewall, DNS, HTTPS, public deployment | Phase 9 and later | Requires a Phase 7 gate PASS first. |
+
+**Values that must not become requirements:** tuning numbers found in external videos or tutorials — such as `steps=100`, octree resolution `900–1000`, or a face count of `1,000,000` — are **experimental values**, not MVP requirements. Prove them against the real machine's VRAM and record the values actually used in the manifest.
+
+**CUDA 12.6** is a planning candidate consistent with the wrapper, but never install it blindly from a video. It must pass T058–T060 and be pinned in the manifest first.
+
+**Status of external videos and tutorials:** *reference only*, per the [source register](../reference/ai-runtime-sources.md). They never substitute for real Windows evidence and never close a task.
+
+## ComfyUI API integration rules
+
+These rules apply from Phase 7 onward and remain binding in Phase 8.
+
+**Permitted path:**
+
+```text
+Browser
+  -> FastAPI only
+      -> upload image safely
+      -> create opaque Job ID + isolated directory
+      -> map allowed API-workflow fields
+      -> POST /prompt to 127.0.0.1:8188
+      -> observe /ws, /queue, /history
+      -> validate exactly one GLB
+      -> publish controlled result to application storage
+      -> browser preview/download
+```
+
+**Strictly forbidden:**
+
+```text
+Browser -> ComfyUI directly
+User filename/path -> workflow output path
+Shared ComfyUI input/output without Job ID prefix
+overwrite=True on shared input directory
+Search newest output file
+Automatic resubmit after timeout/restart
+Expose :8188, :8000, :3000, or :3389 publicly
+```
+
+Only **API-format** exported workflows may be used (not the regular workflow file), and ComfyUI prompt IDs must never leak into public API models.
+
 ## Prerequisites
 
-- [ ] The Owner has supplied the GitHub destination as `owner/repository` and confirmed `private` or `public` before any push.
+- [x] The Owner has confirmed the GitHub destination: [`R1KASAN/3D-Generate-by-AI-Local`](https://github.com/R1KASAN/3D-Generate-by-AI-Local), visibility `public` — baseline commit `fefad6e` is pushed (see Step 0).
 - [ ] The operator has local-administrator access only when a pinned installer requires it.
 - [ ] The operator can write to the project root, evidence directory, and local runtime directory.
 - [ ] The PC has an NVIDIA GPU ready for testing and sufficient free disk for manifest-defined runtime/model assets.
@@ -37,49 +91,60 @@ When an external video or README conflicts with these artifacts, the project art
 
 ## Procedure
 
-### Step 0: Git baseline and GitHub publication
+### Step 0: Clone and verify the Git baseline on the Windows machine
 
-Run this before Windows work so the target machine clones a reviewable source baseline.
+> **Status: the baseline is already created and pushed.** The operator does not create a new commit or repository. This step is to *fetch and verify* that the Windows machine has exactly the source the Owner reviewed.
+
+Confirmed baseline:
+
+| Item | Value |
+|---|---|
+| Repository | [`R1KASAN/3D-Generate-by-AI-Local`](https://github.com/R1KASAN/3D-Generate-by-AI-Local) |
+| Visibility | `public` (Owner confirmed) |
+| Default branch | `main` |
+| Baseline commit | `fefad6ec10d2e96405b34efb0d0e4352258ab3b4` |
+| Scope | 150 source/spec/docs files — passed secret review; no model weights, runtime artifacts, or credentials |
+
+Clone on the Windows machine:
 
 ```powershell
-Set-Location <PROJECT_ROOT>
+Set-Location <PARENT_DIRECTORY>
+git clone https://github.com/R1KASAN/3D-Generate-by-AI-Local.git
+Set-Location 3D-Generate-by-AI-Local
+git log -1 --format=%H
 git status --short
-git remote -v
-git diff --check
-git ls-files --others --exclude-standard
 ```
 
-Review every staged file. Never use unreviewed `git add .`. Do not commit real `.env` files, credentials, password hashes, tokens, private keys, production/public IPs, router configuration, model weights, ComfyUI output/temp, local storage, logs, caches, or `node_modules`.
+**Expected result:** `git log -1 --format=%H` returns `fefad6ec10d2e96405b34efb0d0e4352258ab3b4` (or a newer commit the Owner has announced), and `git status --short` is empty.
 
-Run an owner-approved secret scan. At minimum, inspect staged source with:
+**If it fails:** stop as `BLOCKED`, save sanitized command/error evidence to `evidence/setup/git-baseline.md`, and request Owner confirmation of the repository or access. Never create a new repository or a new baseline commit.
+
+Create local environment files from the templates (real `.env` files are ignored and must never be committed):
 
 ```powershell
+Copy-Item .env.example .env
+Copy-Item apps\api\.env.example apps\api\.env
+Copy-Item apps\web\.env.example apps\web\.env
+```
+
+**Expected result:** local `.env` files exist and `git status --short` is still empty, confirming `.gitignore` works.
+
+**If it fails:** if any `.env` appears in `git status`, stop immediately and notify the Owner. Do not commit.
+
+#### Before any future commit (standing rule)
+
+Whenever the operator commits new evidence or scripts, scan first. Never use unreviewed `git add .`. Do not commit real `.env` files, credentials, password hashes, tokens, private keys, production/public IPs, router configuration, model weights, ComfyUI output/temp, local storage, logs, caches, or `node_modules`.
+
+```powershell
+git status --short
 rg -n --hidden --glob '!node_modules/**' --glob '!.git/**' --glob '!*.pdf' `
   '(?i)(api[_-]?key|secret|password|token|-----begin .*private key-----)' <PATHS_TO_STAGE>
-```
-
-**Expected result:** no secret enters the commit and the Owner approves the staged paths, repository, and visibility.
-
-**If it fails:** remove the secret from staged material, move it to an ignored local secret store, scan again, and do not commit or push.
-
-Only after review, create the initial commit with this or an Owner-approved equivalent:
-
-```powershell
 git add <REVIEWED_PATHS_ONLY>
-git commit -m "chore: establish local 3d generation MVP baseline"
-git status --short
 ```
 
-Add the remote and push only after the Owner provides `<OWNER_REPOSITORY>` and confirmed visibility:
+**Expected result:** no secret and no runtime artifact enters the commit.
 
-```powershell
-git remote add origin https://github.com/<OWNER_REPOSITORY>.git
-git push -u origin main
-```
-
-**Expected result:** clean status, owner-approved remote, and the same commit SHA visible on GitHub.
-
-**If it fails:** report `BLOCKED`, save sanitized command/error evidence to `evidence/setup/git-baseline.md`, and request the missing repository, visibility, or access decision. Never guess or create a repository.
+**If it fails:** remove the sensitive material, move it into an ignored `.env`, and scan again. Do not commit or push until clean.
 
 ### Step 1: T058 — Hardware/runtime inventory
 
@@ -174,7 +239,8 @@ Blocker and smallest owner action:
 
 ## Verification
 
-- [ ] Git evidence records reviewed paths, commit SHA, and GitHub URL without secrets.
+- [x] Git baseline: commit `fefad6e` pushed to `R1KASAN/3D-Generate-by-AI-Local` after secret review — see [`evidence/setup/git-baseline.md`](../../evidence/setup/git-baseline.md).
+- [ ] The Windows machine cloned the same baseline commit and `git status --short` is empty.
 - [ ] `evidence/windows/gpu-baseline.md` contains real inventory.
 - [ ] `evidence/windows/runtime-compatibility.md` contains real compatibility evidence.
 - [ ] `evidence/windows/shape-smoke.md` contains a real API-driven shape artifact.
@@ -214,3 +280,4 @@ Blocker and smallest owner action:
 | Date | Run By | Notes |
 |---|---|---|
 | 2026-09-03 | Not yet run | Runbook created from approved project artifacts; no Windows evidence claimed. |
+| 2026-09-03 | Owner (macOS) | v1.1 — Git baseline `fefad6e` created and pushed to `R1KASAN/3D-Generate-by-AI-Local` (public) after secret review; Step 0 changed from "create baseline" to "clone and verify baseline"; added Scope boundary and ComfyUI API integration rules; no Windows evidence claimed. |

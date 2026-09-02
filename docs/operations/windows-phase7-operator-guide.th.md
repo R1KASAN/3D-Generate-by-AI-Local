@@ -2,7 +2,7 @@
 
 **Owner:** Windows Server Operator; GitHub publication requires Owner approval | **Frequency:** As needed, once per target server build | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
 
-**Document version:** 1.0 | **Source language:** Thai | **English translation:** [windows-phase7-operator-guide.en.md](windows-phase7-operator-guide.en.md), version 1.0
+**Document version:** 1.1 | **Source language:** Thai | **English translation:** [windows-phase7-operator-guide.en.md](windows-phase7-operator-guide.en.md), version 1.1
 
 > เอกสารนี้เป็นคู่มือทำงานซ้ำได้สำหรับ Phase 7 เท่านั้น การเขียนหรืออ่านเอกสารนี้ไม่ใช่หลักฐานว่า Windows, NVIDIA GPU, ComfyUI, Hunyuan3D หรือ GLB ผ่านแล้ว
 
@@ -26,9 +26,63 @@
 
 หากวิดีโอหรือ README ภายนอกขัดกับเอกสารข้างต้น ให้เอกสารใน project และ owner-approved decision มีผลเหนือกว่า
 
+## Scope boundary (อ่านก่อนเริ่ม)
+
+Phase 7 พิสูจน์ **compatibility ของ runtime** เท่านั้น ไม่ใช่คุณภาพของโมเดลและไม่ใช่ deployment
+
+**อยู่ในขอบเขต Phase 7:** T058–T064 คือ inventory, pinned install, compatibility check, native shape smoke, manifest verification, checklist และ gate verdict
+
+**อยู่นอกขอบเขต — ห้ามทำใน Phase นี้:**
+
+| หัวข้อ | สถานะ | เหตุผล |
+|---|---|---|
+| SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | เป็น reference เท่านั้น ห้ามเพิ่มเข้า MVP workflow, dependency หรือ task completion criteria |
+| Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | เป็นงาน manual หลัง MVP ไม่ใช่ส่วนของ FastAPI/ComfyUI pipeline |
+| Textured GLB acceptance, FastAPI-to-ComfyUI integration | Phase 8 ขึ้นไป | shape smoke ที่ผ่านไม่นับเป็น MVP acceptance |
+| LAN, Caddy, firewall, DNS, HTTPS, public deployment | Phase 9 ขึ้นไป | ต้องผ่าน Phase 7 gate ก่อน |
+
+**ค่าที่ห้ามยึดเป็น requirement:** ตัวเลข tuning ที่พบในวิดีโอหรือ tutorial ภายนอก เช่น `steps=100`, octree resolution `900–1000` หรือ face count `1,000,000` เป็น **ค่าทดลอง** ไม่ใช่ข้อกำหนดของ MVP ต้องพิสูจน์กับ VRAM ของเครื่องจริงและบันทึกค่าที่ใช้จริงลง manifest
+
+**CUDA 12.6** เป็น planning candidate ที่สอดคล้องกับ wrapper แต่ห้ามติดตั้งตามวิดีโอแบบ blind ต้องผ่าน T058–T060 และ pin เวอร์ชันลง manifest ก่อน
+
+**สถานะของวิดีโอ/tutorial ภายนอก:** เป็น *reference only* ตาม [source register](../reference/ai-runtime-sources.md) ห้ามใช้แทน Windows evidence จริง และห้ามใช้ปิด task ใด ๆ
+
+## ComfyUI API integration rules
+
+กฎเหล่านี้มีผลตั้งแต่ Phase 7 และบังคับต่อเนื่องใน Phase 8
+
+**เส้นทางที่อนุญาต:**
+
+```text
+Browser
+  -> FastAPI only
+      -> upload image safely
+      -> create opaque Job ID + isolated directory
+      -> map allowed API-workflow fields
+      -> POST /prompt to 127.0.0.1:8188
+      -> observe /ws, /queue, /history
+      -> validate exactly one GLB
+      -> publish controlled result to application storage
+      -> browser preview/download
+```
+
+**สิ่งที่ห้ามเด็ดขาด:**
+
+```text
+Browser -> ComfyUI directly
+User filename/path -> workflow output path
+Shared ComfyUI input/output without Job ID prefix
+overwrite=True on shared input directory
+Search newest output file
+Automatic resubmit after timeout/restart
+Expose :8188, :8000, :3000, or :3389 publicly
+```
+
+ต้องใช้ workflow ที่ export เป็น **API format** เท่านั้น (ไม่ใช่ไฟล์ workflow ปกติ) และ prompt ID ของ ComfyUI ต้องไม่รั่วออกไปยัง public API model
+
 ## Prerequisites
 
-- [ ] Owner ระบุ GitHub repository แบบ `owner/repository` และยืนยัน `private` หรือ `public` ก่อน push
+- [x] Owner ยืนยัน GitHub repository ปลายทางแล้ว: [`R1KASAN/3D-Generate-by-AI-Local`](https://github.com/R1KASAN/3D-Generate-by-AI-Local) visibility `public` — baseline commit `fefad6e` push แล้ว (ดู Step 0)
 - [ ] Operator มีสิทธิ์ local administrator เฉพาะเมื่อ installer ที่ pin แล้วต้องใช้สิทธิ์นั้น
 - [ ] Operator มีสิทธิ์เขียนใน project root, evidence directory และ local runtime directory
 - [ ] Windows PC มี NVIDIA GPU ที่พร้อมทดสอบ และมีพื้นที่ว่างเพียงพอสำหรับ runtime/model ตาม manifest
@@ -37,49 +91,60 @@
 
 ## Procedure
 
-### Step 0: ตรวจ Git baseline และเตรียม GitHub publication
+### Step 0: Clone และตรวจ Git baseline บนเครื่อง Windows
 
-> ทำขั้นนี้ก่อนงาน Windows เพื่อให้เครื่อง Windows clone source เดียวกับที่ตรวจสอบได้
+> **สถานะ: baseline สร้างและ push เรียบร้อยแล้ว** operator ไม่ต้องสร้าง commit หรือ repository ใหม่ หน้าที่ของขั้นนี้คือ *ดึงและตรวจสอบ* ว่าเครื่อง Windows ได้ source ตรงกับที่ owner review แล้ว
+
+Baseline ที่ยืนยันแล้ว:
+
+| รายการ | ค่า |
+|---|---|
+| Repository | [`R1KASAN/3D-Generate-by-AI-Local`](https://github.com/R1KASAN/3D-Generate-by-AI-Local) |
+| Visibility | `public` (owner ยืนยันแล้ว) |
+| Default branch | `main` |
+| Baseline commit | `fefad6ec10d2e96405b34efb0d0e4352258ab3b4` |
+| ขอบเขต | 150 ไฟล์ source/spec/docs — ผ่าน secret review, ไม่มี model weights, runtime artifacts หรือ credentials |
+
+Clone บนเครื่อง Windows:
 
 ```powershell
-Set-Location <PROJECT_ROOT>
+Set-Location <PARENT_DIRECTORY>
+git clone https://github.com/R1KASAN/3D-Generate-by-AI-Local.git
+Set-Location 3D-Generate-by-AI-Local
+git log -1 --format=%H
 git status --short
-git remote -v
-git diff --check
-git ls-files --others --exclude-standard
 ```
 
-ตรวจรายการก่อน stage ทุกครั้ง ห้ามใช้ `git add .` โดยไม่ตรวจไฟล์ ห้าม commit `.env` จริง, credentials, password hash, token, private key, production/public IP, router configuration, model weights, ComfyUI output/temp, local storage, logs, caches หรือ `node_modules`
+**Expected result:** `git log -1 --format=%H` คืนค่า `fefad6ec10d2e96405b34efb0d0e4352258ab3b4` (หรือ commit ที่ใหม่กว่าซึ่ง owner ประกาศแล้ว) และ `git status --short` ว่าง
 
-ใช้ secret scan ที่ owner อนุมัติ; อย่างน้อยตรวจ source ที่จะ stage ด้วย:
+**If it fails:** หยุดเป็น `BLOCKED` บันทึก command/error ที่ sanitize แล้วใน `evidence/setup/git-baseline.md` และขอ owner ยืนยัน repository หรือ access ห้ามสร้าง repository หรือ commit baseline ใหม่เอง
+
+สร้าง local environment file จาก template (ไฟล์ `.env` จริงถูก ignore และต้องไม่ถูก commit):
 
 ```powershell
+Copy-Item .env.example .env
+Copy-Item apps\api\.env.example apps\api\.env
+Copy-Item apps\web\.env.example apps\web\.env
+```
+
+**Expected result:** มี `.env` สำหรับ local run และ `git status --short` ยังคงว่าง (ยืนยันว่า `.gitignore` ทำงาน)
+
+**If it fails:** หาก `.env` โผล่ใน `git status` ให้หยุดทันทีและแจ้ง owner ห้าม commit
+
+#### ก่อน commit ใด ๆ ในอนาคต (กฎถาวร)
+
+ทุกครั้งที่ operator จะ commit evidence หรือ script ใหม่ ต้อง scan ก่อน ห้ามใช้ `git add .` โดยไม่ตรวจไฟล์ ห้าม commit `.env` จริง, credentials, password hash, token, private key, production/public IP, router configuration, model weights, ComfyUI output/temp, local storage, logs, caches หรือ `node_modules`
+
+```powershell
+git status --short
 rg -n --hidden --glob '!node_modules/**' --glob '!.git/**' --glob '!*.pdf' `
   '(?i)(api[_-]?key|secret|password|token|-----begin .*private key-----)' <PATHS_TO_STAGE>
-```
-
-**Expected result:** ไม่มี secret ที่จะถูก commit และ owner อนุมัติรายการไฟล์/visibility/repository ปลายทาง
-
-**If it fails:** เอาข้อมูลลับออกจากไฟล์ที่จะ stage, ย้ายไป local secret manager หรือ `.env` ที่ ignore แล้ว scan ซ้ำ ห้าม commit หรือ push
-
-เมื่อ review ผ่านแล้วเท่านั้น จึงสร้าง initial commit ด้วย message นี้หรือ equivalent ที่ owner อนุมัติ:
-
-```powershell
 git add <REVIEWED_PATHS_ONLY>
-git commit -m "chore: establish local 3d generation MVP baseline"
-git status --short
 ```
 
-เพิ่ม remote และ push เฉพาะเมื่อ Owner ให้ค่า `<OWNER_REPOSITORY>` และ visibility ที่ยืนยันแล้ว:
+**Expected result:** ไม่มี secret และไม่มี runtime artifact เข้า commit
 
-```powershell
-git remote add origin https://github.com/<OWNER_REPOSITORY>.git
-git push -u origin main
-```
-
-**Expected result:** `git status --short` ว่าง, remote ชี้ไปยัง owner-approved repository และ GitHub แสดง commit SHA เดียวกัน
-
-**If it fails:** หยุดเป็น `BLOCKED`; บันทึก command/error ที่ sanitize แล้วใน `evidence/setup/git-baseline.md` และขอ owner ยืนยัน repository, visibility หรือ access ไม่เดา/สร้าง repository เอง
+**If it fails:** เอาข้อมูลลับออก, ย้ายไป `.env` ที่ ignore แล้ว scan ซ้ำ ห้าม commit หรือ push จนกว่าจะสะอาด
 
 ### Step 1: T058 — เก็บ hardware/runtime inventory
 
@@ -174,7 +239,8 @@ Blocker and smallest owner action:
 
 ## Verification
 
-- [ ] Git baseline evidence ระบุ reviewed paths, commit SHA และ GitHub URL โดยไม่มี secret
+- [x] Git baseline: commit `fefad6e` push ไปยัง `R1KASAN/3D-Generate-by-AI-Local` แล้ว ผ่าน secret review — ดู [`evidence/setup/git-baseline.md`](../../evidence/setup/git-baseline.md)
+- [ ] เครื่อง Windows clone baseline commit เดียวกันสำเร็จและ `git status --short` ว่าง
 - [ ] `evidence/windows/gpu-baseline.md` มี inventory จริง
 - [ ] `evidence/windows/runtime-compatibility.md` มี compatibility result จริง
 - [ ] `evidence/windows/shape-smoke.md` มี API-driven shape artifact จริง
@@ -214,3 +280,4 @@ Blocker and smallest owner action:
 | Date | Run By | Notes |
 |---|---|---|
 | 2026-09-03 | Not yet run | Runbook created from approved project artifacts; no Windows evidence claimed. |
+| 2026-09-03 | Owner (macOS) | v1.1 — Git baseline `fefad6e` สร้างและ push ไปยัง `R1KASAN/3D-Generate-by-AI-Local` (public) หลังผ่าน secret review; Step 0 เปลี่ยนจาก "สร้าง baseline" เป็น "clone และตรวจ baseline"; เพิ่ม Scope boundary และ ComfyUI API integration rules; ยังไม่มี Windows evidence ใด ๆ |
