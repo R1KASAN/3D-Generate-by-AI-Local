@@ -1,0 +1,74 @@
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
+
+# Secrets and environment files
+.env
+.env.*
+!.env.example
+apps/*/.env
+apps/*/.env.*
+!apps/*/.env.example
+*.pem
+*.key
+*.p12
+credentials/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node/Next.js
+node_modules/
+.next/
+out/
+dist/
+build/
+coverage/
+*.tsbuildinfo
+
+# Runtime storage and generated service output
+/storage/
+/apps/api/storage/
+/apps/web/test-results/
+playwright-report/
+logs/
+tmp/
+temp/
+quarantine/
+comfyui-output/
+ComfyUI/output/
+ComfyUI/temp/
+*.log
+
+# Large model/runtime artifacts (keep only explicitly reviewed fixtures)
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.onnx
+*.bin
+*.whl
+
+# Local caches
+.cache/
+cache/
+
+# Local code-index and editor state
+.codebase-memory/
+.serena/
+
+# Owner-held network evidence; never publish deployment IPs or source documents.
+/docs/reference/buntuk-authentication-exemption-2024-12-26.pdf
+/docs/reference/buntuk-authentication-exemption-2024-12-26.md

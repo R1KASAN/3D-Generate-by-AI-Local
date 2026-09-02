@@ -1,0 +1,136 @@
+# Data Model: Local 3D Generation MVP
+
+**Source of truth**: One local SQLite database owned by one FastAPI process.
+ComfyUI identifiers are private integration metadata, never public resource IDs.
+
+## Job state machine
+
+```text
+queued ──────> processing ──────> completed
+  │                 │  └────────> failed
+  │                 └───────────> cancelled
+  ├─────────────────────────────> failed
+  └─────────────────────────────> cancelled
+```
+
+- `queued`, `processing`, `completed`, `failed`, and `cancelled` are the only
+  public states.
+- A transition is accepted only through one domain state-transition function.
+- Terminal states are immutable. A recovery operation creates a recorded event;
+  it does not silently rewrite a terminal job.
+- `completed` is legal only after exactly one GLB passes validation and is
+  atomically published.
+- Progress is nullable and informational. It must never imply precision that the
+  engine did not report.
+- Queue position is nullable, computed at read time when possible, and labelled
+  approximate unless exact ordering is guaranteed.
+
+## `generation_jobs`
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | UUID text | Opaque UUIDv4, primary key; safe folder name |
+| `token_digest` | bytes/text | Digest of 256-bit token; raw token never persisted |
+| `status` | enum text | Validated state machine value |
+| `progress_percent` | integer nullable | 0–100 only when engine evidence exists |
+| `progress_message` | text nullable | Safe allowlisted user message |
+| `engine_job_id` | text nullable | Internal prompt ID; never exposed publicly |
+| `workflow_revision` | text | Pinned manifest revision/hash |
+| `input_asset_id` | UUID text | Same-job input asset |
+| `output_asset_id` | UUID text nullable | Same-job validated GLB; set only on completion |
+| `error_code` | text nullable | Stable safe application error code |
+| `error_message` | text nullable | Sanitized message; no paths, traces, or engine IDs |
+| `attempt_count` | integer | Starts at 0; bounded by documented recovery policy |
+| `created_at` | UTC timestamp | Server generated |
+| `queued_at` | UTC timestamp | Server generated |
+| `started_at` | UTC timestamp nullable | Set on transition to processing |
+| `finished_at` | UTC timestamp nullable | Set on terminal transition |
+| `expires_at` | UTC timestamp | `created_at + 24 hours` |
+| `updated_at` | UTC timestamp | Updated in same transaction as state change |
+
+Invariants:
+
+- `output_asset_id` is non-null only for `completed`.
+- A terminal job has `finished_at`.
+- Every asset reference belongs to the same job.
+- A job token grants access to exactly one `id`.
+- Submission and first `queued` event commit in one transaction.
+
+## `job_assets`
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | UUID text | Primary key |
+| `job_id` | UUID text | Foreign key with cascade cleanup |
+| `kind` | enum text | `input`, `intermediate`, or `output` |
+| `relative_path` | text | Server-generated, relative to storage root |
+| `content_type` | text | Verified media type |
+| `size_bytes` | integer | Non-negative; input at most 10 MiB |
+| `sha256` | text | Integrity and evidence |
+| `created_at` | UTC timestamp | Server generated |
+| `expires_at` | UTC timestamp | No later than job expiry |
+
+The database stores relative paths only. Path resolution must join against the
+configured storage root, resolve it, and prove it remains inside that root.
+
+## `job_events`
+
+| Field | Type | Rules |
+|---|---|---|
+| `id` | integer | Monotonic primary key |
+| `job_id` | UUID text | Foreign key |
+| `sequence` | integer | Unique and increasing per job |
+| `event_type` | text | `accepted`, `state_changed`, `progress`, `reconciled`, `downloaded`, `cleanup` |
+| `from_status` | enum nullable | Required for state changes |
+| `to_status` | enum nullable | Required for state changes |
+| `progress_percent` | integer nullable | Evidence-backed only |
+| `safe_message` | text nullable | Sanitized operator/user trace |
+| `created_at` | UTC timestamp | Server generated |
+
+Events support Job-ID tracing but do not contain raw tokens, uploaded filenames,
+private paths, Basic credentials, or full engine payloads.
+
+## Workflow manifest
+
+The workflow manifest is a versioned file, not a mutable database entity. Each
+job records its manifest revision. It pins ComfyUI/custom-node revisions, model
+artifacts, API workflow hash, node contract, runtime versions, license evidence,
+and output naming rules.
+
+## Filesystem isolation
+
+```text
+storage/
+├── uploads/<job_id>/input.<verified-extension>
+├── work/<job_id>/...
+├── outputs/<job_id>/model.glb
+└── quarantine/<job_id>/...       # failed validation; not publicly served
+```
+
+- Directories are created by the server from the UUID, not user input.
+- Temporary writes use a same-volume temporary name then atomic rename.
+- Public endpoints never accept a path or filename parameter.
+- Download filenames are generated by the server.
+
+## Admission and cleanup
+
+1. Check bounded request metadata and storage free percentage before accepting.
+2. Stream and validate upload before creating GPU work.
+3. If free space is below 10%, return 507 and create no queued job.
+4. A periodic task and startup sweep delete expired job files, then database rows
+   or tombstone metadata according to the implemented audit policy.
+5. Cleanup skips non-terminal jobs. Existing accepted work may finish even when
+   new admission is disabled.
+6. Missing output during reconciliation transitions the job to `failed`; it
+   never fabricates `completed`.
+
+## Restart reconciliation
+
+- `queued`: remains queued and is eligible for serial dispatch.
+- `processing` with known engine ID: inspect ComfyUI queue/history and reconcile.
+- `processing` with no recoverable engine evidence: transition to `failed` with a
+  safe restart-recovery code; do not submit a duplicate automatically.
+- `completed`: revalidate that the published output exists before serving it;
+  a missing file returns a safe unavailable response and creates an operator event.
+- Expired terminal jobs are inaccessible even if delayed cleanup left files.
+

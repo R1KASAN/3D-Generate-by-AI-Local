@@ -1,0 +1,2 @@
+"""Replaceable generation-engine adapters."""
+

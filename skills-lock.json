@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "runbook": {
+      "source": "anthropics/knowledge-work-plugins",
+      "sourceType": "github",
+      "skillPath": "operations/skills/runbook/SKILL.md",
+      "computedHash": "f23987e7c978f2b08ebcba07401ae46e616cfbb186b56c0f412b82987874268a"
+    }
+  }
+}

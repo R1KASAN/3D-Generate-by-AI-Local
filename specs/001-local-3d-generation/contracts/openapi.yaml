@@ -1,0 +1,219 @@
+openapi: 3.1.0
+info:
+  title: Local 3D Generation MVP API
+  version: 0.1.0
+  description: >-
+    Public application contract behind Caddy shared authentication. ComfyUI
+    identifiers and routes are never exposed by this API.
+servers:
+  - url: /api/v1
+paths:
+  /jobs:
+    post:
+      summary: Validate one image and create a queued generation job
+      operationId: createJob
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Content-verified JPEG or PNG, maximum 10 MiB
+      responses:
+        "201":
+          description: Accepted and durably queued
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: Always no-store
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobCreated" }
+        "413": { $ref: "#/components/responses/UploadTooLarge" }
+        "415": { $ref: "#/components/responses/UnsupportedImage" }
+        "422": { $ref: "#/components/responses/CorruptImage" }
+        "503": { $ref: "#/components/responses/EngineUnavailable" }
+        "507": { $ref: "#/components/responses/LowStorage" }
+  /jobs/{job_id}:
+    get:
+      summary: Read safe persisted job state
+      operationId: getJob
+      security: [{ JobToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/JobId" }]
+      responses:
+        "200":
+          description: Current job state
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Job" }
+        "404": { $ref: "#/components/responses/JobNotFound" }
+  /jobs/{job_id}/model:
+    get:
+      summary: Fetch the completed GLB for browser preview
+      operationId: previewModel
+      security: [{ JobToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/JobId" }]
+      responses:
+        "200":
+          description: Validated GLB bytes
+          headers:
+            Cache-Control:
+              schema: { type: string }
+              description: private, no-store
+          content:
+            model/gltf-binary:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/JobNotFound" }
+        "409": { $ref: "#/components/responses/ResultNotReady" }
+        "410": { $ref: "#/components/responses/Expired" }
+  /jobs/{job_id}/download:
+    get:
+      summary: Download the same completed GLB
+      operationId: downloadModel
+      security: [{ JobToken: [] }]
+      parameters: [{ $ref: "#/components/parameters/JobId" }]
+      responses:
+        "200":
+          description: Validated GLB with attachment disposition
+          content:
+            model/gltf-binary:
+              schema: { type: string, format: binary }
+        "404": { $ref: "#/components/responses/JobNotFound" }
+        "409": { $ref: "#/components/responses/ResultNotReady" }
+        "410": { $ref: "#/components/responses/Expired" }
+  /health/live:
+    get:
+      summary: Process liveness for local operator checks
+      operationId: getLiveness
+      responses:
+        "200":
+          description: Process is alive
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+  /health/ready:
+    get:
+      summary: Readiness without leaking internal details
+      operationId: getReadiness
+      responses:
+        "200":
+          description: Ready to accept requests
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: Not ready
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+components:
+  securitySchemes:
+    JobToken:
+      type: apiKey
+      in: header
+      name: X-Job-Token
+      description: Per-job 256-bit capability token returned once at creation
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    JobStatus:
+      type: string
+      enum: [queued, processing, completed, failed, cancelled]
+    Job:
+      type: object
+      required: [job_id, status, created_at, expires_at]
+      properties:
+        job_id: { type: string, format: uuid }
+        status: { $ref: "#/components/schemas/JobStatus" }
+        progress_percent:
+          oneOf: [{ type: integer, minimum: 0, maximum: 100 }, { type: "null" }]
+        progress_message:
+          oneOf: [{ type: string }, { type: "null" }]
+        queue_position:
+          oneOf: [{ type: integer, minimum: 1 }, { type: "null" }]
+          description: Informational; omitted/null when the engine cannot guarantee it
+        queue_position_is_approximate: { type: boolean, default: true }
+        error:
+          oneOf: [{ $ref: "#/components/schemas/SafeError" }, { type: "null" }]
+        model_url:
+          oneOf: [{ type: string }, { type: "null" }]
+        download_url:
+          oneOf: [{ type: string }, { type: "null" }]
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    JobCreated:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          required: [job_token]
+          properties:
+            job_token:
+              type: string
+              description: Returned once; client must send it as X-Job-Token
+    SafeError:
+      type: object
+      required: [code, message]
+      properties:
+        code: { type: string }
+        message: { type: string }
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, degraded, unavailable] }
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: "#/components/schemas/SafeError" }
+  responses:
+    JobNotFound:
+      description: Unknown job, wrong/missing token, or inaccessible job
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    UploadTooLarge:
+      description: Upload exceeds 10 MiB
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    UnsupportedImage:
+      description: Content is not JPEG or PNG
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    CorruptImage:
+      description: Image cannot be safely decoded
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    EngineUnavailable:
+      description: Generation service cannot safely accept work
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    LowStorage:
+      description: New-job admission disabled below 10 percent free disk
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    ResultNotReady:
+      description: Job exists but has no completed result
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+    Expired:
+      description: Job result has expired
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/ErrorResponse" }
+

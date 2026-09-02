@@ -1,0 +1,28 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from fastapi import APIRouter
+
+
+HealthStatus = Literal["ok", "degraded", "unavailable"]
+_ALLOWED_STATUS = frozenset({"ok", "degraded", "unavailable"})
+
+
+def health_payload(status: str) -> dict[str, str]:
+    if status not in _ALLOWED_STATUS:
+        raise ValueError("health status is not allowed")
+    return {"status": status}
+
+
+router = APIRouter(prefix="/health", tags=["health"])
+
+
+@router.get("/live")
+async def live() -> dict[str, str]:
+    return health_payload("ok")
+
+
+@router.get("/ready")
+async def ready() -> dict[str, str]:
+    return health_payload("ok")

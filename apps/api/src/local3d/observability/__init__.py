@@ -1,0 +1,2 @@
+"""Safe structured observability helpers."""
+
