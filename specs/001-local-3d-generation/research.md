@@ -77,6 +77,16 @@ shape generation is only an earlier hardware smoke test.
 Windows-tested Python 3.12 / PyTorch 2.6 / CUDA 12.6 path and exposes the shape,
 paint, and mesh export nodes needed by the workflow.
 
+**Amendment (2026-09-03)**: The provisioned Windows server's GPU is an NVIDIA
+RTX 5070 (Blackwell, compute capability `sm_120`). PyTorch 2.6 and CUDA 12.6
+predate Blackwell consumer support and contain no `sm_120` kernels, so
+`torch.cuda` operations would fail even with a healthy driver. The pinned
+Python/CUDA environment for the ComfyUI texture lane is updated to PyTorch
+(cu128 wheel build) and CUDA Toolkit 12.8 — the first versions with official
+Blackwell support — while keeping Python 3.12 unchanged. This must be
+revalidated with actual `torch.cuda.is_available()` / `get_device_name(0)`
+evidence at T060, same as any other pinned dependency.
+
 **Alternatives rejected**: Treating a shape-only GLB as success would falsify the
 acceptance criteria. Auto-updating custom nodes makes results unreproducible.
 

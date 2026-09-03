@@ -19,7 +19,10 @@ per-job capability token.
 
 **Language/Version**: Python 3.12 for FastAPI; Node.js 24 LTS, TypeScript 5.x,
 Next.js 16.x, and React 19.x for the frontend; separate pinned Python 3.12,
-PyTorch 2.6, and CUDA 12.6 environment for the Windows ComfyUI texture lane
+PyTorch (cu128 build), and CUDA 12.8 environment for the Windows ComfyUI
+texture lane — amended 2026-09-03 from the original PyTorch 2.6/CUDA 12.6 pin
+because the target server's NVIDIA RTX 5070 (Blackwell, `sm_120`) has no
+kernel support in PyTorch/CUDA builds older than 12.8; see research.md §5
 
 **Primary Dependencies**: FastAPI, Uvicorn, Pydantic, Pillow, HTTPX, aiosqlite;
 Next.js, React Three Fiber 9.x, Three.js, Drei; ComfyUI plus pinned

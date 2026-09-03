@@ -1,0 +1,27 @@
+{
+  "1": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "hunyuan3d-smoke-input.png"
+    }
+  },
+  "2": {
+    "class_type": "Hy3D21ShapeSmokeOffloadMeshGen",
+    "inputs": {
+      "model": "hunyuan3d-dit-v2-1-model.fp16.ckpt",
+      "image": ["1", 0],
+      "steps": 30,
+      "guidance_scale": 5.0,
+      "octree_resolution": 256
+    }
+  },
+  "3": {
+    "class_type": "Hy3DExportMesh",
+    "inputs": {
+      "trimesh": ["2", 0],
+      "filename_prefix": "smoke/hunyuan3d-21-shape-smoke",
+      "file_format": "glb",
+      "save_file": true
+    }
+  }
+}

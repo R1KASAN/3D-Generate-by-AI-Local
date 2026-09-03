@@ -1,0 +1,81 @@
+{
+  "_status": "T059 pinning only. workflow_id/workflow_revision/hash/model/required_node_classes/input_bindings fields below are completed at T061 (shape smoke) and T075 (full textured workflow) once the actual workflow JSON is exported and pinned. Configuration text alone is not completion evidence for this manifest; see evidence/windows/comfyui-pinning.md for the running-instance and post-restart proof.",
+  "workflow_id": "hunyuan3d-textured-glb",
+  "workflow_revision": "pending-T075",
+  "api_workflow_sha256": null,
+  "editable_workflow_sha256": null,
+  "comfyui_commit": "345c9190497c82cff53e71fb4ae00d1e135a6542",
+  "comfyui_version": "0.34.0",
+  "comfyui_repo": "https://github.com/comfyanonymous/ComfyUI",
+  "custom_nodes": {
+    "ComfyUI-Manager": {
+      "commit": "b75fc664ecab9c4602380d9660833d02f6a63333",
+      "repo": "https://github.com/Comfy-Org/ComfyUI-Manager"
+    },
+    "ComfyUI-Hunyuan3DWrapper": {
+      "commit": "2609efa38f6a98292476f714839b7c1e5f9b699a",
+      "repo": "https://github.com/kijai/ComfyUI-Hunyuan3DWrapper",
+      "note": "Matches the commit already audited in research.md section 5 at planning time; revalidated identical on this Windows install."
+    },
+    "local3d_smoke_nodes.py": {
+      "commit": null,
+      "repo": "project-owned, not upstream",
+      "note": "T061 only. Added at ComfyUI/custom_nodes/local3d_smoke_nodes.py to enable accelerate CPU-offload for the pinned Hunyuan3D 2.1 shape pipeline on this 8GB GPU; does not modify ComfyUI-Hunyuan3DWrapper source. See evidence/windows/shape-smoke.md for the full reasoning and diagnosis."
+    }
+  },
+  "runtime": {
+    "python": "3.12.10",
+    "pytorch": "2.11.0+cu128",
+    "cuda": "12.8",
+    "sqlite": "3.49.1",
+    "amendment_note": "Amended 2026-09-03 from the originally pinned PyTorch 2.6/CUDA 12.6 because the target GPU (RTX 5070 Laptop, Blackwell/sm_120) has no kernel support before PyTorch/CUDA 12.8. See research.md section 5 and plan.md Technical Context."
+  },
+  "models": [
+    {
+      "name": "hunyuan3d-dit-v2-1 (shape, 2.1 smoke lane)",
+      "path": "ComfyUI/models/diffusion_models/hunyuan3d-dit-v2-1-model.fp16.ckpt",
+      "source": "https://huggingface.co/tencent/Hunyuan3D-2.1/resolve/main/hunyuan3d-dit-v2-1/model.fp16.ckpt",
+      "size_bytes": 7366389768,
+      "sha256": "6b519fc7242f78e9b5f47ea4d55668fe3d944a2d27332f4ca68d29a6ff603f5e",
+      "note": "Used by the T061 shape smoke lane. Hash computed on the installed file 2026-09-03; re-verify if the file is ever replaced."
+    }
+  ],
+  "smoke_workflow": {
+    "workflow_id": "hunyuan3d-21-shape-smoke",
+    "scope": "T061 hardware smoke test only - shape-only, explicitly not MVP textured-GLB completion",
+    "api_workflow_path": "api/hunyuan3d-21-shape-smoke.json",
+    "api_workflow_sha256": "02a21366f523885ee7c1603fa9bd7204964ce22e87999b50d737e2be1a63bd56",
+    "editable_workflow_path": "editable/hunyuan3d-21-shape-smoke.json",
+    "editable_workflow_sha256": "7f28104984c8b81ae3e9eabb4013c4d028087655aed63807be962d4b3a79a7df",
+    "required_node_classes": [
+      "LoadImage",
+      "Hy3D21ShapeSmokeOffloadMeshGen",
+      "Hy3DExportMesh"
+    ],
+    "result_sha256": "8f3c9c3ce26a6f019131907cc555b5d18bfa2971df56a790d6c7cb9ecb8b15d8"
+  },
+  "required_node_classes": [
+    "LoadImage",
+    "Hy3D21ShapeSmokeOffloadMeshGen",
+    "Hy3DExportMesh"
+  ],
+  "available_node_classes_snapshot": [
+    "DownloadAndLoadHy3DDelightModel", "DownloadAndLoadHy3DPaintModel", "Hy3DApplyTexture",
+    "Hy3DBPT", "Hy3DBakeFromMultiview", "Hy3DCameraConfig", "Hy3DDelightImage",
+    "Hy3DDiffusersSchedulerConfig", "Hy3DExportMesh", "Hy3DFastSimplifyMesh",
+    "Hy3DGenerateMesh", "Hy3DGenerateMeshMultiView", "Hy3DGetMeshPBRTextures",
+    "Hy3DIMRemesh", "Hy3DLoadMesh", "Hy3DMeshInfo", "Hy3DMeshUVWrap",
+    "Hy3DMeshVerticeInpaintTexture", "Hy3DModelLoader", "Hy3DNvdiffrastRenderer",
+    "Hy3DPostprocessMesh", "Hy3DRenderMultiView", "Hy3DRenderMultiViewDepth",
+    "Hy3DRenderSingleView", "Hy3DSampleMultiView", "Hy3DSetMeshPBRAttributes",
+    "Hy3DSetMeshPBRTextures", "Hy3DTorchCompileSettings", "Hy3DUploadMesh",
+    "Hy3DVAEDecode", "Hy3DVAELoader", "Hy3D_2_1SimpleMeshGen"
+  ],
+  "input_bindings": [],
+  "output_binding": {
+    "node_class": "Hy3DExportMesh",
+    "prefix_pattern": "jobs/{job_id}/model",
+    "expected_extension": ".glb"
+  },
+  "licenses": []
+}
