@@ -65,6 +65,11 @@ def test_secret_like_environment_values_are_rejected() -> None:
         )
 
 
+def test_generic_secret_environment_values_are_rejected() -> None:
+    with pytest.raises(ValueError, match="secret-like"):
+        load_settings({"SECRET": "must-not-enter-application-config"})
+
+
 def test_unrelated_process_credentials_do_not_break_application_startup() -> None:
     settings = load_settings(
         {

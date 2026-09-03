@@ -94,7 +94,8 @@ def _is_secret_like_name(name: str) -> bool:
         for marker in _SECRET_MARKERS
     )
     return is_secret_like and (
-        normalized in _ENV_TO_FIELD
+        normalized in _SECRET_MARKERS
+        or normalized in _ENV_TO_FIELD
         or normalized.startswith(_APPLICATION_ENV_PREFIXES)
     )
 
