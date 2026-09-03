@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import shutil
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
@@ -20,6 +21,9 @@ from .generation_coordinator import GenerationCoordinator
 from .image_validation import ensure_disk_admission, validate_upload
 from .job_tokens import create_job_token, verify_job_token
 from .serial_dispatcher import SerialDispatcher
+
+
+logger = logging.getLogger(__name__)
 
 
 class JobNotFoundError(LookupError):
@@ -59,6 +63,7 @@ class JobService:
         self.dispatcher = SerialDispatcher()
         self.coordinator = GenerationCoordinator()
         self._advance_lock = asyncio.Lock()
+        self._worker_task: asyncio.Task[None] | None = None
 
     async def startup(self) -> None:
         await self.database.initialize()
@@ -85,6 +90,58 @@ class JobService:
         task.cancel()
         with suppress(asyncio.CancelledError):
             await task
+
+    def start_worker(self, *, interval_seconds: float = 1.0) -> asyncio.Task[None]:
+        """Start the in-process queue worker that advances jobs without polling clients."""
+        if interval_seconds <= 0:
+            raise ValueError("worker interval must be positive")
+        if self._worker_task is not None and not self._worker_task.done():
+            raise RuntimeError("queue worker is already running")
+        self._worker_task = asyncio.create_task(self._worker_loop(interval_seconds))
+        return self._worker_task
+
+    async def stop_worker(self, task: asyncio.Task[None]) -> None:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+        if self._worker_task is task:
+            self._worker_task = None
+
+    async def _worker_loop(self, interval_seconds: float) -> None:
+        while True:
+            try:
+                await self._advance_next_queued_job()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Keep a transient adapter/database failure from permanently
+                # stopping queue progress; the next iteration retries safely.
+                logger.exception("background generation worker iteration failed")
+            await asyncio.sleep(interval_seconds)
+
+    async def _advance_next_queued_job(self) -> None:
+        active_id = self.dispatcher.active_job
+        if active_id is not None:
+            job = self._jobs.get(UUID(active_id))
+            if job is None:
+                job = await self.repository.get_job(UUID(active_id))
+                if job is not None:
+                    self._jobs[job.job_id] = job
+            if job is not None:
+                await self._advance(job)
+            return
+
+        pending = self.dispatcher.pending
+        if not pending:
+            return
+        job_id = UUID(pending[0])
+        job = self._jobs.get(job_id)
+        if job is None:
+            job = await self.repository.get_job(job_id)
+            if job is not None:
+                self._jobs[job.job_id] = job
+        if job is not None:
+            await self._advance(job)
 
     async def _maintenance_loop(self, interval_seconds: float) -> None:
         while True:
@@ -234,11 +291,19 @@ class JobService:
         if decision.target_state is JobState.QUEUED:
             return
         if decision.target_state is JobState.PROCESSING:
-            event = job.transition(
-                JobState.PROCESSING,
-                progress_percent=decision.progress_percent,
-                progress_message=decision.progress_message,
-            )
+            if job.status is JobState.PROCESSING:
+                if (
+                    job.progress_percent == decision.progress_percent
+                    and job.progress_message == decision.progress_message
+                ):
+                    return
+                event = job.record_progress(decision.progress_percent, decision.progress_message)
+            else:
+                event = job.transition(
+                    JobState.PROCESSING,
+                    progress_percent=decision.progress_percent,
+                    progress_message=decision.progress_message,
+                )
             await self.repository.persist_transition(job, event)
         elif decision.target_state is JobState.COMPLETED:
             try:
@@ -264,6 +329,14 @@ class JobService:
                 created_at=datetime.now(timezone.utc),
                 expires_at=job.expires_at or datetime.now(timezone.utc),
             )
+            # A fast or cached engine execution can finish between polls, so
+            # the public API may never observe an intermediate running state.
+            # Preserve the domain state machine by recording the processing
+            # bridge before completion; successful output is definitive proof
+            # that processing occurred.
+            if job.status is JobState.QUEUED:
+                processing_event = job.transition(JobState.PROCESSING)
+                await self.repository.persist_transition(job, processing_event)
             event = job.transition(JobState.COMPLETED, output_asset_id=output_asset.asset_id, progress_percent=100)
             await self.repository.persist_transition(job, event, asset=output_asset)
             self.dispatcher.complete(str(job.job_id))

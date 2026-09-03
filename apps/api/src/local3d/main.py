@@ -39,10 +39,12 @@ def create_app(settings: Settings | None = None, service: JobService | None = No
         if job_service is not None:
             await job_service.startup()
             await RecoveryService(job_service).reconcile()
+            worker_task = job_service.start_worker()
             maintenance_task = job_service.start_maintenance()
             try:
                 yield
             finally:
+                await job_service.stop_worker(worker_task)
                 await job_service.stop_maintenance(maintenance_task)
         else:
             yield
