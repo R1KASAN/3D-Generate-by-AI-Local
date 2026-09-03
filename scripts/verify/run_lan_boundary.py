@@ -23,10 +23,19 @@ def _multipart_body(path: Path) -> tuple[bytes, str]:
     boundary = f"----local3d-{secrets.token_hex(16)}"
     content = path.read_bytes()
     filename = path.name.replace('"', "")
+    content_types = {
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
+    }
+    try:
+        image_content_type = content_types[path.suffix.lower()]
+    except KeyError:
+        raise ValueError("image must use a .jpg, .jpeg, or .png extension") from None
     header = (
         f"--{boundary}\r\n"
         f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
-        "Content-Type: application/octet-stream\r\n\r\n"
+        f"Content-Type: {image_content_type}\r\n\r\n"
     ).encode()
     footer = f"\r\n--{boundary}--\r\n".encode()
     return header + content + footer, f"multipart/form-data; boundary={boundary}"
