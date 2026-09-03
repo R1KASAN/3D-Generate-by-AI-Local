@@ -1,14 +1,14 @@
-# Runbook: Windows NVIDIA AI Server — Hardware Gate ถึง LAN Delivery (Phase 7–10)
+# Runbook: Windows NVIDIA AI Server — Hardware Gate ถึง Public Deployment (Phase 7–12)
 
-**Owner:** Windows Server Operator; การเปิด public access ต้องรอ Owner approval | **Frequency:** As needed, ครั้งเดียวต่อการ build server หนึ่งเครื่อง | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
+**Owner:** Windows Server Operator; การเปิด public access ต้องผ่าน T085 owner-approval gate ก่อนทุกครั้ง | **Frequency:** As needed, ครั้งเดียวต่อการ build server หนึ่งเครื่อง | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
 
-**Document version:** 2.0 | **Source language:** Thai | **English translation:** [windows-ai-server-runbook.en.md](windows-ai-server-runbook.en.md), version 2.0
+**Document version:** 3.0 | **Source language:** Thai | **English translation:** [windows-ai-server-runbook.en.md](windows-ai-server-runbook.en.md), version 3.0
 
-> เอกสารนี้เป็นคู่มือทำงานซ้ำได้สำหรับ Phase 7 ถึง Phase 10 การเขียนหรืออ่านเอกสารนี้ไม่ใช่หลักฐานว่า Windows, NVIDIA GPU, ComfyUI, Hunyuan3D, GLB หรือ LAN flow ผ่านแล้ว หลักฐานต้องมาจากการรันบนเครื่องจริงเท่านั้น
+> เอกสารนี้เป็นคู่มือทำงานซ้ำได้สำหรับ Phase 7 ถึง Phase 12 การเขียนหรืออ่านเอกสารนี้ไม่ใช่หลักฐานว่า Windows, NVIDIA GPU, ComfyUI, Hunyuan3D, GLB, LAN flow หรือ public deployment ผ่านแล้ว หลักฐานต้องมาจากการรันบนเครื่องจริงเท่านั้น
 
 ## Purpose
 
-นำ Windows NVIDIA server จาก "เครื่องเปล่า" ไปถึง "AI server ที่ใช้งานได้จริงผ่าน LAN" โดยผ่าน gate ตามลำดับ:
+นำ Windows NVIDIA server จาก "เครื่องเปล่า" ไปถึง "AI server ที่คนนอกเครือข่ายใช้งานได้จริงผ่าน HTTPS" โดยผ่าน gate ตามลำดับ:
 
 | Phase | ผลลัพธ์ที่ต้องพิสูจน์ | Tasks |
 |---|---|---|
@@ -16,8 +16,10 @@
 | 8 | FastAPI คุย ComfyUI จริงได้ผ่าน adapter เดียวกับ mock | T068, T072–T074 |
 | 9 | สร้าง **textured GLB จริง** ได้ และ isolate ระหว่าง job ได้ | T075–T079 |
 | 10 | เว็บครบ flow ใช้งานได้จาก **เครื่องอื่นใน LAN** | T080–T084 |
+| 11 | เปิด HTTPS ออก public หลัง Owner อนุมัติ พร้อม auth 2 ชั้น | T085–T092 |
+| 12 | ทดสอบจากนอกเครือข่ายจริง + audit ปิดงานทั้งโปรเจกต์ | T093–T097 |
 
-หยุดทันทีเมื่อ task ใด FAIL หรือ BLOCKED ห้ามข้าม gate เพื่อรายงานความคืบหน้า
+หยุดทันทีเมื่อ task ใด FAIL หรือ BLOCKED ห้ามข้าม gate เพื่อรายงานความคืบหน้า **Phase 11 มีเงื่อนไขพิเศษ**: ต้องได้ Owner approval แบบเจาะจงเป็นลายลักษณ์อักษรก่อนแตะ public infrastructure ใดๆ (ดู T085) — เป็นเงื่อนไขถาวรของ phase นี้ ไม่ใช่แค่ checklist ทั่วไป
 
 ## Hardware boundary (ข้อบังคับ อ่านก่อนทุกอย่าง)
 
@@ -31,6 +33,14 @@
 เหตุผล: MacBook ไม่มี NVIDIA GPU/CUDA จึงรัน Hunyuan3D จริงไม่ได้ ผลจาก macOS ที่ผ่านคือ mock lane (Phase 6 ปิดไปแล้ว) ไม่ใช่หลักฐานของ hardware gate นี้
 
 ถ้ามีใครเสนอให้รัน AI server บน macOS หรือใช้ผล macOS ปิด task Phase 7–10 ให้ปฏิเสธและรายงาน `BLOCKED`
+
+## Network boundary (สำคัญสำหรับ Phase 11)
+
+Phase 11 จะเปิด port 80/443 ออก internet ผ่าน **router ของเครื่อง Windows operator เอง** ไม่ใช่ router ของ Owner
+
+- Operator ต้องยินยอมให้เปิด port forward บนเครือข่ายบ้าน/ที่ทำงานของตัวเอง — เป็นสิทธิ์ของ operator ในฐานะเจ้าของเครือข่ายนั้น ไม่ใช่แค่ Owner สั่งแล้วต้องทำตาม
+- ถ้า operator ไม่สะดวกเปิด router ของตัวเองออก public ให้แจ้ง Owner ทันที **ก่อน** เริ่ม T085 — มีทางเลือกอื่น (เช่น VPN) ที่ constitution อนุญาตไว้เช่นกัน
+- domain/DDNS ที่ใช้จะชี้มาที่ IP ของเครือข่าย operator เท่านั้น ไม่มีการย้าย service ไปเครื่องอื่น
 
 ## Source of truth
 
@@ -50,16 +60,18 @@
 
 ## Scope boundary (อ่านก่อนเริ่ม)
 
-**อยู่ในขอบเขตของ runbook นี้:** Phase 7 → 8 → 9 → 10 ตามลำดับ จบที่ LAN ใช้งานได้จริง
+**อยู่ในขอบเขตของ runbook นี้:** Phase 7 → 8 → 9 → 10 → 11 → 12 ตามลำดับ จบที่ external user ใช้งานผ่าน HTTPS ได้จริง
 
-**อยู่นอกขอบเขต — ห้ามทำ:**
+**อยู่นอกขอบเขต — ห้ามทำแม้ผ่าน Phase 11-12 แล้ว:**
 
 | หัวข้อ | สถานะ | เหตุผล |
 |---|---|---|
 | SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | เป็น reference เท่านั้น ห้ามเพิ่มเข้า MVP workflow, dependency หรือ task completion criteria |
 | Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | เป็นงาน manual หลัง MVP ไม่ใช่ส่วนของ FastAPI/ComfyUI pipeline |
-| Caddy, DNS, DDNS, HTTPS certificate, router port-forward, public firewall | **Phase 11 — hard gate** | ต้องมี Owner approval สดตาม T085 ก่อนเริ่ม ดูหัวข้อ "เตรียมเข้า Phase 11" |
-| การส่ง Public IP ให้ Owner ตอนนี้ | ยังไม่ต้องทำ | ดูหัวข้อ "เตรียมเข้า Phase 11" — ตอนนี้ต้องการแค่ 3 อย่าง ไม่รวมตัวเลข IP |
+| แก้ access control จาก "shared Caddy credential + per-job token" เป็นแบบอื่น | ต้อง Owner ตัดสินใจใหม่ | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) ล็อก approved decision นี้ไว้แล้ว การเปลี่ยนคือ supersede owner decision ต้องขออนุมัติใหม่เป็นลายลักษณ์อักษร ไม่ใช่เปลี่ยนเอง |
+| เปิด public ก่อนที่ T085 owner-approval gate จะผ่าน | ต้องหยุดเสมอ | ดู "Phase 11 — T085" ด้านล่าง เป็นเงื่อนไขที่ยกเว้นไม่ได้ |
+
+**เกี่ยวกับ Public IP:** ไม่ใช่ secret แต่ไม่แนะนำให้พิมพ์ตัวเลข IP ตรงๆ ลงในแชท/LINE — ให้บันทึกไว้ใน `evidence/public-deployment/dns-router.md` (redacted ตามที่ T089 กำหนด) แล้วให้ Owner เปิดดูจาก evidence file หรือ repo แทน
 
 **ค่าที่ห้ามยึดเป็น requirement:** ตัวเลข tuning ที่พบในวิดีโอหรือ tutorial ภายนอก เช่น `steps=100`, octree resolution `900–1000` หรือ face count `1,000,000` เป็น **ค่าทดลอง** ไม่ใช่ข้อกำหนดของ MVP ต้องพิสูจน์กับ VRAM ของเครื่องจริงและบันทึกค่าที่ใช้จริงลง manifest
 
@@ -107,8 +119,9 @@ Expose :8188, :8000, :3000, or :3389 publicly
 - [ ] Operator มีสิทธิ์ local administrator เฉพาะเมื่อ installer ที่ pin แล้วต้องใช้สิทธิ์นั้น
 - [ ] Operator มีสิทธิ์เขียนใน project root, evidence directory และ local runtime directory
 - [ ] Windows PC มีพื้นที่ว่างเพียงพอสำหรับ runtime/model ตาม manifest
-- [ ] ComfyUI, FastAPI และ browser ยังไม่ถูกเปิดออก Internet; ports `3000`, `8000`, `8188`, `3389` ต้องเป็น private
+- [ ] ComfyUI, FastAPI และ browser ยังไม่ถูกเปิดออก Internet ก่อนถึง Phase 11; ports `3000`, `8000`, `8188`, `3389` ต้องเป็น private เสมอ
 - [ ] Operator อ่าน artifact ใน Source of truth ครบแล้ว
+- [ ] (สำหรับ Phase 11) Operator ยินยอมเปิด port forward 80/443 บน router เครือข่ายของตัวเอง หรือแจ้ง Owner ก่อนถึง T085 ถ้าไม่สะดวก
 
 ## Procedure
 
@@ -403,25 +416,148 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 
 ---
 
-## เตรียมเข้า Phase 11 (Public Deployment) — หยุดและรายงาน
+---
 
-> **หยุดที่นี่** Phase 11 เป็น hard gate ตาม T085 และ [Constitution ข้อ IX](../../.specify/memory/constitution.md) — public access control และ deployment exposure ต้องมี Owner approval ห้าม operator ตัดสินใจเอง
+## Phase 11 — Protected Caddy HTTPS deployment (T085–T092)
 
-**ห้ามแตะก่อนได้ไฟเขียว:** domain, DNS, DDNS, Caddy config, HTTPS certificate, router port-forward, public firewall rule
+> เข้า phase นี้ได้เมื่อ `evidence/lan/phase-10-gate.md` = PASS **และ** T085 (owner-approval gate) อนุมัติแล้วเท่านั้น ห้ามแตะ domain/DNS/Caddy/firewall ก่อนถึงขั้นนี้
 
-**สิ่งที่ต้องรายงานให้ Owner เมื่อ Phase 10 = PASS** (สามข้อนี้เท่านั้น):
+**Hard gate ที่ยกเว้นไม่ได้:** access control ที่ approve ไว้คือ **shared Caddy credential + per-job `X-Job-Token`** เท่านั้น ถ้า decision นี้หายไปหรือถูกแทนที่โดยไม่มี Owner อนุมัติใหม่ ให้หยุด phase ทันที ห้ามเปิด port 3000, 8000, 8188 หรือ 3389 ออก public ไม่ว่ากรณีใด
 
-| # | ข้อมูลที่ต้องการ | ทำไมถึงจำเป็น |
-|---|---|---|
-| 1 | มีโดเมนอยู่แล้วหรือจะใช้ DDNS ตัวไหน | Caddy ออก HTTPS certificate จากชื่อโดเมน ไม่ใช่จากตัวเลข IP |
-| 2 | Public IP เป็น **static**, **dynamic** หรืออยู่หลัง **CGNAT** | ถ้าอยู่หลัง CGNAT จะ forward port ไม่ได้ ต้องเปลี่ยนวิธี deploy ทั้งหมด |
-| 3 | Router เปิด port forward `80/443` ได้หรือไม่ | ถ้าเปิดไม่ได้ Phase 11 ต้องออกแบบใหม่ก่อนเริ่ม |
+### Step 22: T085 — Owner approval gate (ทำก่อนทุกอย่างใน phase นี้)
 
-**ยังไม่ต้องส่งตัวเลข Public IP ตอนนี้** — Public IP ไม่ใช่ secret แต่ยังไม่จำเป็นจนกว่าจะถึงขั้นตั้ง DNS จริงและทดสอบจาก Internet ตอนนั้น Owner จะขอให้ revalidate ค่าปัจจุบันอีกครั้ง เพราะค่าที่ส่งล่วงหน้าอาจเปลี่ยนไปแล้ว
+ส่งข้อมูลนี้ให้ Owner แล้ว **รอการอนุมัติเป็นลายลักษณ์อักษร** ก่อนแตะ public infrastructure ใดๆ:
 
-**Expected result:** Owner ได้รับสามข้อข้างบน + link ไป `evidence/lan/phase-10-gate.md` แล้วตอบกลับเป็น approval หรือ BLOCKED
+| # | ข้อมูลที่ต้องได้รับอนุมัติ |
+|---|---|
+| 1 | ขอบเขต model-license/territory ของผู้ใช้ที่อนุญาต |
+| 2 | โดเมนที่จะใช้ หรือ DDNS provider |
+| 3 | ใครเป็นเจ้าของ credential ที่จะแจก |
+| 4 | Public IP ปัจจุบัน (revalidate สดๆ ตอนนี้ ไม่ใช่ค่าเก่า) |
+| 5 | สถานะ static/dynamic/CGNAT ของ IP นั้น |
+| 6 | Router เปิด port forward 80/443 ได้จริงไหม |
 
-**If it fails:** ถ้าข้อใดข้อหนึ่งตอบไม่ได้ ให้รายงานว่าตอบไม่ได้ ห้ามเดา และห้ามเริ่ม Phase 11
+บันทึกการอนุมัติ (หรือ BLOCKED) ลง `evidence/public-deployment/owner-gate.md`
+
+**Expected result:** ทุกข้อได้รับอนุมัติชัดเจนจาก Owner เป็นลายลักษณ์อักษร
+
+**If it fails:** ถ้าข้อใดข้อหนึ่งยังไม่ได้รับอนุมัติ ให้บันทึกเป็น `BLOCKED` **โดยไม่แตะ public infrastructure เลย** ห้ามเดาหรือเริ่ม Step 23 ต่อ
+
+### Step 23: T086 — Caddy configuration contract tests
+
+เขียน `tests/security/test_caddy_contract.py` ทดสอบ HTTPS-only access, Basic auth, request-body limit, `/api` proxying, การตัด header `Authorization` แบบ Basic ออก และแบน public upstream bind
+
+```powershell
+uv run --project apps/api pytest tests/security/test_caddy_contract.py
+```
+
+**Expected result:** test fail เพราะยังไม่มี Caddy config จริง (ตามหลัก test-first) และมี assertion ที่แบน public 3000/8000/8188/3389 ครบ
+
+**If it fails:** ถ้า test เขียนไม่ครบตาม T086 ให้แก้ test ก่อน ห้ามข้ามไป implement โดยไม่มี test คุม
+
+### Step 24: T087 — Implement Caddy configuration
+
+สร้าง `deploy/caddy/Caddyfile` และ `deploy/caddy/.env.example` พร้อม hashed credential environment injection
+
+```powershell
+caddy validate --config deploy/caddy/Caddyfile
+```
+
+**Expected result:** `caddy validate` ผ่าน, T086 ผ่าน, HTTPS routing ที่ authenticate แล้วทำงาน, Basic-header ถูกตัดออกจริง และ **ไม่มี credential ถูก commit**
+
+**If it fails:** ห้าม commit Caddyfile ที่มี credential ฝังอยู่ แก้ให้ใช้ environment variable เท่านั้น แล้ว scan ซ้ำก่อน commit
+
+### Step 25: T088 — Windows Firewall boundary
+
+สร้าง `deploy/firewall/configure-public-boundary.ps1` (least-privilege) และ `deploy/firewall/verify-public-boundary.ps1` (read-only verifier)
+
+**Expected result:** `evidence/public-deployment/firewall.md` บันทึกว่า 443 allowed, 80 (ถ้าเปิด) จำกัดแค่ redirect/certificate เท่านั้น และ 3000/8000/8188/3389 **blocked**
+
+**If it fails:** ถ้า verifier เจอ port internal เปิดอยู่ ให้หยุดทันที เป็น security boundary ที่ห้ามผ่อน
+
+### Step 26: T089 — DNS/DDNS + router forwarding
+
+Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุมัติใน T085 เท่านั้น forward เฉพาะ 80/443
+
+บันทึกหลักฐานแบบ redacted (ปิดบัง IP บางส่วนตามความเหมาะสม) ใน `evidence/public-deployment/dns-router.md`
+
+**Expected result:** public DNS resolve ไปยัง Public IP ที่ revalidate แล้ว, ไม่มี CGNAT/routing blocker เหลืออยู่, และ **ไม่มี internal port forward อื่นเปิดอยู่นอกเหนือ 80/443**
+
+**If it fails:** ถ้าเจอ CGNAT หรือ router forward ไม่ได้ตามที่รายงานไว้ใน T085 ให้หยุดและกลับไปหา Owner ทันที ห้ามหาทางเปิด port อื่นทดแทน
+
+### Step 27: T090 — TLS certificate + redirect validation
+
+รัน `scripts/verify/test_https_boundary.py`
+
+**Expected result:** `evidence/public-deployment/tls.md` แสดง trusted hostname validation, HTTPS 443 สำเร็จ, HTTP 80 ทำแค่ redirect/certificate issuance และ **ไม่มี certificate warning**
+
+**If it fails:** ห้ามใช้ self-signed certificate หรือ bypass warning เพื่อให้ผ่าน หยุดและแก้ที่ domain/DNS config
+
+### Step 28: T091 — Auth boundary tests จาก external client
+
+รัน `scripts/verify/test_public_auth.py` จากเครื่องนอกเครือข่าย
+
+**Expected result:** `evidence/public-deployment/auth.md` แสดงว่า request ที่ไม่ authenticate ถูกปฏิเสธก่อนสร้าง job จริง, request ที่ authenticate แล้วทำงานได้, token ผิด job คืน 404 แบบเดียวกันทุกกรณี (ไม่บอกใบ้ว่า job มีจริงไหม) และ **ไม่มี credential/token หลุดใน URL หรือ log ที่ capture ไว้**
+
+**If it fails:** ถ้า token หลุดใน log หรือ URL ให้หยุดทันที เป็นข้อมูลอ่อนไหวที่รั่วออกไปแล้ว
+
+### Step 29: T092 — External port scan
+
+รัน `scripts/verify/test_external_ports.py` จากนอกเครือข่าย
+
+**Expected result:** `evidence/public-deployment/ports.md` แสดงว่า 443 (และ 80 ถ้าเปิด) ทำงานตามคาด และ **3000, 8000, 8188, 3389 เชื่อมต่อไม่ได้จากภายนอกเลย**
+
+**If it fails:** ถ้า internal port ใดเชื่อมได้จากภายนอก ให้หยุดและปิดทันที ก่อนดำเนินการต่อ
+
+**Phase 11 exit criteria:** T085 owner gate อนุมัติแล้ว, TLS และ access control สองชั้นผ่านครบ, มีแค่ทางเข้า public ที่ตั้งใจเท่านั้นที่เข้าถึงได้ และไม่มี secret ถูก commit
+
+---
+
+## Phase 12 — External-network acceptance และ final audit (T093–T097)
+
+> เข้า phase นี้ได้เมื่อ Phase 11 exit criteria ผ่านครบแล้วเท่านั้น
+
+### Step 30: T093 — External-network full-flow acceptance
+
+สร้างและรัน checklist ที่ `docs/operations/external-acceptance.md`
+
+**Expected result:** `evidence/public-deployment/full-flow.md` บันทึกว่า authorized user upload ได้จริง, เห็น queue/process state จริง, preview textured GLB ได้ครบ (rotate/zoom/pan/reset), และ download ได้ไฟล์ byte-identical ผ่าน HTTPS จริงจากนอกเครือข่าย
+
+**If it fails:** บันทึกจุดที่ flow ขาดและหยุด ห้ามใช้ผลจาก LAN แทน external evidence
+
+### Step 31: T094 — External-network security checklist
+
+สร้าง `docs/operations/external-network-security-checklist.md` และรัน `scripts/verify/test_external_acceptance.py` ครอบคลุม unauthorized, wrong-token, expired-job, invalid upload, low-disk admission และ internal-port cases
+
+**Expected result:** `evidence/public-deployment/negative-cases.md` แสดง response ที่ปลอดภัยทุกกรณีและ **zero information leakage**
+
+**If it fails:** ถ้า error message เผยข้อมูล internal (path, stack trace, job existence) ให้หยุดและแก้ก่อน
+
+### Step 32: T095 — Operator runbook drill
+
+สร้าง `docs/operations/operator-runbook.md` แล้วซ้อมจริง
+
+**Expected result:** `evidence/operations/runbook-drill.md` trace Job ID ได้ตลอด lifecycle: submission, queue, processing, result, download, failure, restart, 24-hour expiry และ low-disk recovery โดยไม่เผย user content หรือ secret
+
+**If it fails:** ถ้า trace ขาดช่วงไหน ให้ระบุจุดที่ recovery ไม่ครบและหยุด
+
+### Step 33: T096 — Final acceptance matrix
+
+สร้าง `evidence/final/mvp-acceptance.md`
+
+**Expected result:** ทุก SC-001–SC-007 และ FR-001–FR-018 ใน [spec.md](../../specs/001-local-3d-generation/spec.md) ต้อง map ไปยัง evidence จริงที่ผ่านแล้ว รายการที่ยังไม่ผ่านต้องระบุ `BLOCKED` ตรงๆ
+
+**If it fails:** ห้ามใช้ checkbox หรือ report เฉยๆ เป็นหลักฐาน ต้องอ้าง evidence file จริงเท่านั้น
+
+### Step 34: T097 — Final constitution and scope audit
+
+ตรวจกับ [constitution.md](../../.specify/memory/constitution.md) แล้วบันทึก `evidence/final/constitution-audit.md`
+
+**Expected result:** ไม่มี Post-MVP component (SDXL, Blender retopo ฯลฯ) หลุดเข้ามา, exception ทุกอันมี reason/risk/owner/review trigger ครบ, internal port ยังคง private และ verdict เป็น `PASS` หรือ `BLOCKED` อย่างซื่อสัตย์
+
+**If it fails:** รายงาน `BLOCKED` พร้อมสิ่งที่ต้องแก้ ห้ามปิดเป็น PASS ทั้งที่ยังมีข้อค้างคา
+
+**Phase 12 exit criteria:** external core flow, negative security check, operator recovery drill, requirement evidence matrix และ constitution audit ผ่านครบทุกข้อ — **นี่คือจุดจบของ MVP**
 
 ## Verification
 
@@ -443,7 +579,17 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 - [ ] `evidence/lan/full-flow.md` มี flow ครบจากเครื่องที่สอง
 - [ ] `evidence/lan/isolation-and-ports.md` พิสูจน์ว่า 8000/8188 เข้าไม่ได้จาก LAN
 - [ ] `evidence/lan/phase-10-gate.md` มี verdict ที่อ้าง evidence ได้
-- [ ] รายงานสามข้อของ Phase 11 ให้ Owner แล้ว (โดเมน/DDNS, ชนิด IP, router 80/443)
+- [ ] `evidence/public-deployment/owner-gate.md` มีการอนุมัติทั้ง 6 ข้อจาก Owner เป็นลายลักษณ์อักษร
+- [ ] `evidence/public-deployment/firewall.md` ยืนยัน 3000/8000/8188/3389 blocked จากภายนอก
+- [ ] `evidence/public-deployment/dns-router.md` ยืนยัน DNS ชี้ IP ที่ revalidate แล้ว ไม่มี CGNAT blocker
+- [ ] `evidence/public-deployment/tls.md` ยืนยัน HTTPS ผ่านไม่มี certificate warning
+- [ ] `evidence/public-deployment/auth.md` ยืนยันไม่มี credential/token หลุดใน log
+- [ ] `evidence/public-deployment/ports.md` ยืนยัน internal port ทั้งหมดเชื่อมไม่ได้จากภายนอก
+- [ ] `evidence/public-deployment/full-flow.md` มี external user flow ที่ผ่านจริงผ่าน HTTPS
+- [ ] `evidence/public-deployment/negative-cases.md` ยืนยัน zero information leakage
+- [ ] `evidence/operations/runbook-drill.md` trace Job ID ได้ครบ lifecycle
+- [ ] `evidence/final/mvp-acceptance.md` map ทุก SC/FR ไปยัง evidence จริง
+- [ ] `evidence/final/constitution-audit.md` มี verdict PASS หรือ BLOCKED ที่ซื่อสัตย์
 
 ## Troubleshooting
 
@@ -461,6 +607,11 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 | job ซ้ำหลัง restart | มี auto-resubmit อยู่ | หยุด T078; ต้อง reconcile ผ่าน `/history` ไม่ใช่ส่งใหม่ |
 | service ไม่ start หลัง reboot | dependency order หรือ service identity ผิด | แก้ service definition; ห้าม start ด้วยมือแล้วบอกว่าผ่าน |
 | เครื่อง LAN เข้า 8000/8188 ได้ | bind หรือ firewall rule ผิด | หยุด T083 ทันที เป็น security boundary |
+| owner-gate.md ยังมีข้อค้างไม่อนุมัติ | ยังไม่ได้ถาม Owner ครบ หรือ Owner ยังไม่ตอบ | หยุดที่ T085; ห้ามเริ่ม T086 ก่อนอนุมัติครบ |
+| Router เปิด 80/443 ไม่ได้ (ISP บล็อกหรือ CGNAT) | เครือข่ายของ operator ไม่รองรับ port forward | หยุด T089; รายงาน Owner ให้พิจารณาทางเลือกอื่น (VPN) แทนการฝืนเปิด |
+| Certificate warning หรือ self-signed cert โผล่ | DNS ยังไม่ propagate หรือ domain ผิด | หยุด T090; ห้าม bypass warning ห้าม deploy ทั้งที่ยังมี warning |
+| Credential/token โผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T091 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง rotate credential |
+| Internal port เข้าได้จากภายนอกใน T092 | firewall rule ยังไม่ครอบคลุมพอ | หยุดทันที; ปิด service จนกว่าจะแก้ firewall เสร็จ |
 
 ## Rollback
 
@@ -468,6 +619,7 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 - ถอน/ย้อนเฉพาะ component ที่ operator เพิ่งติดตั้งและมี documented rollback
 - ห้ามลบ models, evidence, database หรือ project storage เพื่อ "ลองใหม่"
 - ถ้า service ของ Phase 10 มีปัญหา ให้ stop service แล้วกลับไปรันแบบ manual เพื่อ debug ห้ามเปิด port เพิ่มเพื่อแก้
+- ถ้า Phase 11 มีปัญหาหลังเปิด public แล้ว ให้**ปิด router port forward ก่อน** แล้วค่อย debug — อย่าปล่อยให้ public เปิดอยู่ระหว่างแก้ปัญหา
 - หลัง rollback ให้รัน T058 inventory ซ้ำและบันทึกความเปลี่ยนแปลง
 
 ## Escalation
@@ -481,7 +633,10 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 | GLB ไม่ผ่าน validation ซ้ำหลายครั้ง | Project Owner | แนบ validation output; ห้ามลดเกณฑ์เอง |
 | LAN client เข้าถึง internal port ได้ | Project Owner | รายงานทันทีเป็น security issue |
 | Security/public exposure request ก่อน Phase 10 PASS | Project Owner | ปฏิเสธและอ้าง constitution/security boundary |
-| พร้อมเข้า Phase 11 | Project Owner | ส่งสามข้อ (โดเมน/DDNS, ชนิด IP, router 80/443) + link `evidence/lan/phase-10-gate.md` |
+| Operator ไม่สะดวกเปิด router ของตัวเองออก public | Project Owner | แจ้งก่อนเริ่ม T085 ให้ Owner พิจารณาทางเลือกอื่น (VPN) |
+| ข้อมูลใน T085 ข้อใดข้อหนึ่งตอบไม่ได้ | Project Owner | บันทึก `BLOCKED` ใน `owner-gate.md` โดยไม่แตะ public infra |
+| Credential/token รั่วระหว่าง T091 | Project Owner | รายงานทันทีเป็น security incident ขอ rotate credential |
+| Public exposure request ที่ยังไม่ผ่าน owner-gate | Project Owner | ปฏิเสธและอ้าง Constitution ข้อ IX + T085 |
 
 ## History
 
@@ -490,3 +645,4 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 | 2026-09-03 | Not yet run | Runbook created from approved project artifacts; no Windows evidence claimed. |
 | 2026-09-03 | Owner (macOS) | v1.1 — Git baseline สร้างและ push ไปยัง `R1KASAN/3D-Generate-by-AI-Local` (public) หลังผ่าน secret review; Step 0 เปลี่ยนจาก "สร้าง baseline" เป็น "clone และตรวจ baseline"; เพิ่ม Scope boundary และ ComfyUI API integration rules |
 | 2026-09-03 | Owner (macOS) | v2.0 — เปลี่ยนชื่อไฟล์จาก `windows-phase7-operator-guide.*` เป็น `windows-ai-server-runbook.*`; ขยายขอบเขตจาก Phase 7 อย่างเดียวเป็น Phase 7–10 (จบที่ LAN ใช้งานได้); เพิ่ม Hardware boundary ห้ามใช้ macOS เป็น AI server; เพิ่มหัวข้อเตรียมเข้า Phase 11 ที่ขอเพียงโดเมน/DDNS, ชนิด IP และ router 80/443 โดยยังไม่ขอตัวเลข Public IP; ยังไม่มี Windows evidence ใด ๆ |
+| 2026-09-03 | Owner (macOS) | v3.0 — แก้ความเข้าใจผิดว่า Phase 10 ต้องการเครื่อง Owner โดยตรง (จริงๆ ใช้เครื่องอื่นของ operator เองก็พอ); ขยายขอบเขตจาก Phase 7–10 เป็น Phase 7–12 เต็มตาม spec เดิม ตาม Owner ตัดสินใจให้ดำเนินการต่อจนถึง public deployment; เพิ่ม Network boundary section อธิบายว่า Phase 11 เปิด port บน router ของ operator เอง ต้องได้ความยินยอมจาก operator ด้วย ไม่ใช่แค่ Owner สั่ง; เพิ่ม Step 22–34 ครอบคลุม T085–T097 เต็มรูปแบบ (owner-approval gate, Caddy, firewall, DNS/router, TLS, external auth test, port scan, external acceptance, negative-case security test, operator runbook drill, final acceptance matrix, constitution audit); เพิ่ม verification/troubleshooting/escalation ที่เกี่ยวกับ public deployment; ยังไม่มี Windows evidence ใด ๆ |

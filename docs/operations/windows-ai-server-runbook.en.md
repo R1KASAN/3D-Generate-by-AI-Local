@@ -1,14 +1,14 @@
-# Runbook: Windows NVIDIA AI Server — Hardware Gate to LAN Delivery (Phase 7–10)
+# Runbook: Windows NVIDIA AI Server — Hardware Gate to Public Deployment (Phase 7–12)
 
-**Owner:** Windows Server Operator; opening public access requires Owner approval | **Frequency:** As needed, once per server build | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
+**Owner:** Windows Server Operator; opening public access always requires passing the T085 owner-approval gate first | **Frequency:** As needed, once per server build | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
 
-**Document version:** 2.0 | **Source language:** Thai | **Thai source:** [windows-ai-server-runbook.th.md](windows-ai-server-runbook.th.md), version 2.0
+**Document version:** 3.0 | **Source language:** Thai | **Thai source:** [windows-ai-server-runbook.th.md](windows-ai-server-runbook.th.md), version 3.0
 
-> This is a repeatable operational guide for Phase 7 through Phase 10. Writing or reading it is not evidence that Windows, an NVIDIA GPU, ComfyUI, Hunyuan3D, a GLB, or the LAN flow has passed. Evidence must come from real runs on the target machine.
+> This is a repeatable operational guide for Phase 7 through Phase 12. Writing or reading it is not evidence that Windows, an NVIDIA GPU, ComfyUI, Hunyuan3D, a GLB, the LAN flow, or public deployment has passed. Evidence must come from real runs on the target machine.
 
 ## Purpose
 
-Take the Windows NVIDIA server from "bare machine" to "AI server genuinely usable over the LAN", passing each gate in order:
+Take the Windows NVIDIA server from "bare machine" to "AI server genuinely usable by outside users over HTTPS", passing each gate in order:
 
 | Phase | What must be proven | Tasks |
 |---|---|---|
@@ -16,8 +16,10 @@ Take the Windows NVIDIA server from "bare machine" to "AI server genuinely usabl
 | 8 | FastAPI talks to real ComfyUI through the same adapter contract as the mock | T068, T072–T074 |
 | 9 | A **real textured GLB** is produced and jobs stay isolated | T075–T079 |
 | 10 | The full web flow works from a **second device on the LAN** | T080–T084 |
+| 11 | HTTPS opens to the public after Owner approval, with two-layer auth | T085–T092 |
+| 12 | External-network testing plus the final project-closing audit | T093–T097 |
 
-Stop immediately when any task is FAIL or BLOCKED. Never skip a gate merely to report progress.
+Stop immediately when any task is FAIL or BLOCKED. Never skip a gate merely to report progress. **Phase 11 carries a special condition**: it requires explicit, written Owner approval before touching any public infrastructure (see T085) — this is a standing condition of the phase, not an ordinary checklist item.
 
 ## Hardware boundary (mandatory — read before anything else)
 
@@ -31,6 +33,14 @@ Stop immediately when any task is FAIL or BLOCKED. Never skip a gate merely to r
 Reason: the MacBook has no NVIDIA GPU or CUDA, so it cannot run Hunyuan3D for real. Passing results from macOS belong to the mock lane (Phase 6, already closed) and are not evidence for this hardware gate.
 
 If anyone proposes running the AI server on macOS, or using macOS results to close a Phase 7–10 task, refuse and report `BLOCKED`.
+
+## Network boundary (important for Phase 11)
+
+Phase 11 opens ports 80/443 to the Internet through **the Windows operator's own router**, not the Owner's router.
+
+- The operator must consent to forwarding ports on their own home/office network — this is the operator's decision as the owner of that network, not something the Owner can simply order.
+- If the operator is not comfortable exposing their own router to the public, they must say so to the Owner **before** starting T085. There are alternatives the constitution also permits (such as VPN access).
+- The domain/DDNS used will point at the operator's network IP only — no service is relocated to a different machine.
 
 ## Source of truth
 
@@ -50,16 +60,18 @@ When an external video or README conflicts with these artifacts, the project art
 
 ## Scope boundary (read before starting)
 
-**In scope for this runbook:** Phase 7 → 8 → 9 → 10 in order, ending at a working LAN deployment.
+**In scope for this runbook:** Phase 7 → 8 → 9 → 10 → 11 → 12 in order, ending with an external user genuinely able to use the app over HTTPS.
 
-**Out of scope — do not do these:**
+**Out of scope — do not do these, even after Phase 11-12 pass:**
 
 | Topic | Status | Reason |
 |---|---|---|
 | SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | Reference only. Never add to the MVP workflow, dependencies, or task completion criteria. |
 | Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | Manual post-MVP work, not part of the FastAPI/ComfyUI pipeline. |
-| Caddy, DNS, DDNS, HTTPS certificates, router port-forwarding, public firewall | **Phase 11 — hard gate** | Requires fresh Owner approval per T085 before any work starts. See "Preparing for Phase 11". |
-| Sending the Public IP to the Owner right now | Not needed yet | See "Preparing for Phase 11" — only three items are needed now, and the IP number is not one of them. |
+| Changing access control away from "shared Caddy credential + per-job token" | Requires a fresh Owner decision | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) locks in this approved decision. Changing it supersedes an owner decision and needs written re-approval — never change it unilaterally. |
+| Opening anything to the public before the T085 owner-approval gate passes | Always stop | See "Phase 11 — T085" below. This condition has no exceptions. |
+
+**About the Public IP:** it is not a secret, but avoid typing the raw number into chat/LINE — record it in `evidence/public-deployment/dns-router.md` (redacted as T089 requires) and let the Owner view it from the evidence file or the repo instead.
 
 **Values that must not become requirements:** tuning numbers found in external videos or tutorials — such as `steps=100`, octree resolution `900–1000`, or a face count of `1,000,000` — are **experimental values**, not MVP requirements. Prove them against the real machine's VRAM and record the values actually used in the manifest.
 
@@ -107,8 +119,9 @@ Only **API-format** exported workflows may be used (not the regular workflow fil
 - [ ] The operator has local-administrator access only when a pinned installer requires it.
 - [ ] The operator can write to the project root, evidence directory, and local runtime directory.
 - [ ] The PC has sufficient free disk for manifest-defined runtime/model assets.
-- [ ] ComfyUI, FastAPI, and browser services are not Internet-facing; ports `3000`, `8000`, `8188`, and `3389` remain private.
+- [ ] ComfyUI, FastAPI, and browser services are not Internet-facing before Phase 11; ports `3000`, `8000`, `8188`, and `3389` remain private at all other times.
 - [ ] The operator has read every Source-of-truth artifact.
+- [ ] (For Phase 11) The operator consents to forwarding ports 80/443 on their own router, or has told the Owner before T085 if that is not comfortable.
 
 ## Procedure
 
@@ -403,25 +416,148 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 
 ---
 
-## Preparing for Phase 11 (Public Deployment) — stop and report
+---
 
-> **Stop here.** Phase 11 is a hard gate under T085 and [Constitution principle IX](../../.specify/memory/constitution.md) — public access control and deployment exposure require Owner approval. The operator must never decide these alone.
+## Phase 11 — Protected Caddy HTTPS deployment (T085–T092)
 
-**Do not touch before you get the green light:** domain, DNS, DDNS, Caddy config, HTTPS certificates, router port-forwarding, public firewall rules.
+> Enter this phase only when `evidence/lan/phase-10-gate.md` = PASS **and** T085 (the owner-approval gate) has been approved. Never touch domain/DNS/Caddy/firewall before that.
 
-**What to report to the Owner once Phase 10 = PASS** (these three items only):
+**Hard gate with no exceptions:** the approved access control is **shared Caddy credentials plus a per-job `X-Job-Token`**, nothing else. If that decision is missing or gets replaced without fresh written Owner approval, stop the phase immediately. Never expose ports 3000, 8000, 8188, or 3389 publicly under any circumstance.
 
-| # | Information needed | Why it matters |
-|---|---|---|
-| 1 | Whether a domain already exists, or which DDNS provider will be used | Caddy issues the HTTPS certificate from a domain name, not from an IP number |
-| 2 | Whether the Public IP is **static**, **dynamic**, or behind **CGNAT** | Behind CGNAT, port forwarding is impossible and the whole deployment approach must change |
-| 3 | Whether the router can forward ports `80/443` | If it cannot, Phase 11 must be redesigned before it starts |
+### Step 22: T085 — Owner approval gate (do this before anything else in this phase)
 
-**Do not send the Public IP number yet.** A Public IP is not a secret, but it is not needed until DNS is actually being configured and tested from the Internet. At that point the Owner will ask you to revalidate the current value, because anything sent in advance may already be stale.
+Send the Owner the following and **wait for written approval** before touching any public infrastructure:
 
-**Expected result:** the Owner receives the three items above plus a link to `evidence/lan/phase-10-gate.md`, and replies with either approval or BLOCKED.
+| # | Decision needing approval |
+|---|---|
+| 1 | The model-license/territory scope of permitted users |
+| 2 | Which domain or DDNS provider will be used |
+| 3 | Who owns the credentials that will be issued |
+| 4 | The current Public IP (revalidated fresh right now, not an old value) |
+| 5 | Whether that IP is static, dynamic, or behind CGNAT |
+| 6 | Whether the router can actually forward ports 80/443 |
 
-**If it fails:** if any of the three cannot be answered, report that it cannot be answered. Never guess, and never start Phase 11.
+Record the approval (or BLOCKED) in `evidence/public-deployment/owner-gate.md`.
+
+**Expected result:** every item above is explicitly approved by the Owner in writing.
+
+**If it fails:** if any item is not yet approved, record it as `BLOCKED` **without touching public infrastructure at all**. Never guess, and never proceed to Step 23.
+
+### Step 23: T086 — Caddy configuration contract tests
+
+Write `tests/security/test_caddy_contract.py` testing HTTPS-only access, Basic auth, request-body limit, `/api` proxying, stripping the Basic `Authorization` header, and banning public upstream binds.
+
+```powershell
+uv run --project apps/api pytest tests/security/test_caddy_contract.py
+```
+
+**Expected result:** the test fails because no Caddy config exists yet (test-first), and it includes assertions banning public 3000/8000/8188/3389.
+
+**If it fails:** if the test doesn't cover everything T086 requires, fix the test first — never implement ahead of a controlling test.
+
+### Step 24: T087 — Implement the Caddy configuration
+
+Create `deploy/caddy/Caddyfile` and `deploy/caddy/.env.example` with hashed credential environment injection.
+
+```powershell
+caddy validate --config deploy/caddy/Caddyfile
+```
+
+**Expected result:** `caddy validate` passes, T086 passes, authenticated HTTPS routing works, the Basic header is actually stripped, and **no credential is committed**.
+
+**If it fails:** never commit a Caddyfile with an embedded credential. Fix it to use environment variables only, then scan again before committing.
+
+### Step 25: T088 — Windows Firewall boundary
+
+Create `deploy/firewall/configure-public-boundary.ps1` (least-privilege) and `deploy/firewall/verify-public-boundary.ps1` (a read-only verifier).
+
+**Expected result:** `evidence/public-deployment/firewall.md` records 443 allowed, 80 (if enabled) limited strictly to redirect/certificate use, and 3000/8000/8188/3389 **blocked**.
+
+**If it fails:** if the verifier finds an internal port open, stop immediately — this security boundary must never be relaxed.
+
+### Step 26: T089 — DNS/DDNS and router forwarding
+
+Apply only the DNS/DDNS and port forwarding the Owner approved in T085. Forward only 80/443.
+
+Record redacted before/after evidence (partially masking the IP as appropriate) in `evidence/public-deployment/dns-router.md`.
+
+**Expected result:** public DNS resolves to the revalidated Public IP, no CGNAT/routing blocker remains, and **no internal port forward exists beyond 80/443**.
+
+**If it fails:** if CGNAT appears or the router can't forward as reported in T085, stop and go back to the Owner immediately. Never look for another port to work around it.
+
+### Step 27: T090 — TLS certificate and redirect validation
+
+Run `scripts/verify/test_https_boundary.py`.
+
+**Expected result:** `evidence/public-deployment/tls.md` shows trusted hostname validation, HTTPS 443 success, HTTP 80 doing only redirect/certificate issuance, and **no certificate warnings**.
+
+**If it fails:** never use a self-signed certificate or bypass a warning to make it pass. Stop and fix the domain/DNS config instead.
+
+### Step 28: T091 — Auth boundary tests from an external client
+
+Run `scripts/verify/test_public_auth.py` from a machine outside the network.
+
+**Expected result:** `evidence/public-deployment/auth.md` shows unauthenticated requests refused before any job is created, authenticated requests working, wrong-job tokens returning a uniform 404 (no hint whether the job exists), and **no credential or token leaking into any captured URL or log**.
+
+**If it fails:** if a token leaks into a log or URL, stop immediately — that is sensitive data already exposed.
+
+### Step 29: T092 — External port scan
+
+Run `scripts/verify/test_external_ports.py` from outside the network.
+
+**Expected result:** `evidence/public-deployment/ports.md` shows 443 (and 80 if enabled) behaving as expected, and **3000, 8000, 8188, and 3389 are all unreachable from outside**.
+
+**If it fails:** if any internal port is reachable from outside, stop and close it before proceeding further.
+
+**Phase 11 exit criteria:** the T085 owner gate is approved, TLS and two-layer access control both pass, only the intended public entry point is reachable, and no secret has been committed.
+
+---
+
+## Phase 12 — External-network acceptance and final audit (T093–T097)
+
+> Enter this phase only after every Phase 11 exit criterion has passed.
+
+### Step 30: T093 — External-network full-flow acceptance
+
+Create and execute the checklist at `docs/operations/external-acceptance.md`.
+
+**Expected result:** `evidence/public-deployment/full-flow.md` records a real authorized upload, real queue/process state, a complete textured-GLB preview (rotate/zoom/pan/reset), and a byte-identical download — all over real HTTPS from outside the network.
+
+**If it fails:** record exactly where the flow broke and stop. LAN evidence is never a substitute for external evidence.
+
+### Step 31: T094 — External-network security checklist
+
+Create `docs/operations/external-network-security-checklist.md` and run `scripts/verify/test_external_acceptance.py` covering unauthorized, wrong-token, expired-job, invalid upload, low-disk admission, and internal-port cases.
+
+**Expected result:** `evidence/public-deployment/negative-cases.md` shows a safe response for every case and **zero information leakage**.
+
+**If it fails:** if any error message exposes internal detail (paths, stack traces, whether a job exists), stop and fix it first.
+
+### Step 32: T095 — Operator runbook drill
+
+Create `docs/operations/operator-runbook.md`, then actually rehearse it.
+
+**Expected result:** `evidence/operations/runbook-drill.md` traces a Job ID across its full lifecycle — submission, queue, processing, result, download, failure, restart, 24-hour expiry, and low-disk recovery — without exposing user content or secrets.
+
+**If it fails:** identify exactly which recovery step is incomplete and stop.
+
+### Step 33: T096 — Final acceptance matrix
+
+Create `evidence/final/mvp-acceptance.md`.
+
+**Expected result:** every SC-001–SC-007 and FR-001–FR-018 in [spec.md](../../specs/001-local-3d-generation/spec.md) maps to real, passing evidence. Anything not yet passing must be marked `BLOCKED` honestly.
+
+**If it fails:** never treat a checkbox or a report alone as proof — only a cited evidence file counts.
+
+### Step 34: T097 — Final constitution and scope audit
+
+Check against [constitution.md](../../.specify/memory/constitution.md) and record `evidence/final/constitution-audit.md`.
+
+**Expected result:** no Post-MVP component (SDXL, Blender retopology, etc.) has crept in, every exception has a documented reason/risk/owner/review trigger, internal ports remain private, and the verdict is an honest `PASS` or `BLOCKED`.
+
+**If it fails:** report `BLOCKED` with what still needs fixing. Never close it as PASS while something remains unresolved.
+
+**Phase 12 exit criteria:** the external core flow, negative security checks, the operator recovery drill, the requirement-evidence matrix, and the constitution audit all pass — **this is the end of the MVP**.
 
 ## Verification
 
@@ -443,6 +579,17 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 - [ ] `evidence/lan/full-flow.md` shows the complete flow from a second device.
 - [ ] `evidence/lan/isolation-and-ports.md` proves 8000/8188 are unreachable from the LAN.
 - [ ] `evidence/lan/phase-10-gate.md` has an evidence-backed verdict.
+- [ ] `evidence/public-deployment/owner-gate.md` has all six decisions approved by the Owner in writing.
+- [ ] `evidence/public-deployment/firewall.md` confirms 3000/8000/8188/3389 are blocked from outside.
+- [ ] `evidence/public-deployment/dns-router.md` confirms DNS points to a revalidated IP with no CGNAT blocker.
+- [ ] `evidence/public-deployment/tls.md` confirms HTTPS passes with no certificate warnings.
+- [ ] `evidence/public-deployment/auth.md` confirms no credential/token leaked into a log.
+- [ ] `evidence/public-deployment/ports.md` confirms every internal port is unreachable from outside.
+- [ ] `evidence/public-deployment/full-flow.md` contains a real external-user flow that passed over HTTPS.
+- [ ] `evidence/public-deployment/negative-cases.md` confirms zero information leakage.
+- [ ] `evidence/operations/runbook-drill.md` traces a Job ID across its full lifecycle.
+- [ ] `evidence/final/mvp-acceptance.md` maps every SC/FR to real evidence.
+- [ ] `evidence/final/constitution-audit.md` has an honest PASS or BLOCKED verdict.
 - [ ] The three Phase 11 items have been reported to the Owner (domain/DDNS, IP type, router 80/443).
 
 ## Troubleshooting
@@ -461,6 +608,11 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 | Duplicate jobs after a restart | An auto-resubmit path exists | Stop at T078; reconcile via `/history` instead of resubmitting |
 | Services do not start after reboot | Dependency order or service identity is wrong | Fix the service definition; starting it by hand is not a pass |
 | A LAN device can reach 8000/8188 | Wrong bind or firewall rule | Stop at T083 immediately — this is a security boundary |
+| `owner-gate.md` still has unapproved items | Not all questions asked, or the Owner hasn't answered yet | Stop at T085; never start T086 before every item is approved |
+| Router can't forward 80/443 (ISP block or CGNAT) | The operator's network doesn't support port forwarding | Stop at T089; report to the Owner to consider an alternative (VPN) instead of forcing it open |
+| A certificate warning or self-signed cert appears | DNS hasn't propagated yet, or the domain is wrong | Stop at T090; never bypass the warning, never deploy while a warning exists |
+| A credential/token appears in a captured log | Logging isn't masking sensitive values | Stop at T091 immediately — treat this as a leak and rotate the credential |
+| An internal port is reachable from outside during T092 | Firewall rules don't cover it fully | Stop immediately; take the service down until the firewall is fixed |
 
 ## Rollback
 
@@ -468,6 +620,7 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 - Uninstall or roll back only components the operator just installed and that have a documented rollback.
 - Never delete models, evidence, the database, or project storage just to "try again".
 - If Phase 10 services misbehave, stop the services and go back to manual runs to debug — never open extra ports to work around it.
+- If Phase 11 has a problem after going public, **close the router's port forward first**, then debug — never leave it exposed while you investigate.
 - After a rollback, re-run the T058 inventory and record what changed.
 
 ## Escalation
@@ -481,7 +634,10 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 | GLB repeatedly fails validation | Project Owner | Attach validation output; never lower the criteria yourself |
 | A LAN client can reach an internal port | Project Owner | Report immediately as a security issue |
 | A public-exposure request arrives before Phase 10 PASS | Project Owner | Refuse and cite the constitution/security boundary |
-| Ready for Phase 11 | Project Owner | Send the three items (domain/DDNS, IP type, router 80/443) plus a link to `evidence/lan/phase-10-gate.md` |
+| The operator isn't comfortable opening their own router to the public | Project Owner | Say so before starting T085 so the Owner can consider an alternative (VPN) |
+| Any T085 item cannot be answered | Project Owner | Record `BLOCKED` in `owner-gate.md` without touching public infrastructure |
+| A credential/token leaks during T091 | Project Owner | Report immediately as a security incident and request credential rotation |
+| A public-exposure request arrives before the owner gate passes | Project Owner | Refuse and cite Constitution principle IX plus T085 |
 
 ## History
 
@@ -490,3 +646,4 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 | 2026-09-03 | Not yet run | Runbook created from approved project artifacts; no Windows evidence claimed. |
 | 2026-09-03 | Owner (macOS) | v1.1 — Git baseline created and pushed to `R1KASAN/3D-Generate-by-AI-Local` (public) after secret review; Step 0 changed from "create baseline" to "clone and verify baseline"; added Scope boundary and ComfyUI API integration rules |
 | 2026-09-03 | Owner (macOS) | v2.0 — Renamed from `windows-phase7-operator-guide.*` to `windows-ai-server-runbook.*`; scope extended from Phase 7 only to Phase 7–10 (ending at a usable LAN deployment); added the Hardware boundary forbidding macOS as the AI server; added the Phase 11 preparation section requesting only domain/DDNS, IP type, and router 80/443 capability, without asking for the Public IP number; no Windows evidence claimed |
+| 2026-09-03 | Owner (macOS) | v3.0 — Corrected a misunderstanding that Phase 10 required the Owner's own physical device (a second device belonging to the operator is sufficient); extended scope from Phase 7–10 to the full Phase 7–12 per the original spec, per the Owner's decision to proceed all the way to public deployment; added the Network boundary section explaining Phase 11 opens ports on the operator's own router and needs the operator's own consent, not just the Owner's instruction; added Steps 22–34 covering T085–T097 in full (owner-approval gate, Caddy, firewall, DNS/router, TLS, external auth test, port scan, external acceptance, negative-case security testing, operator runbook drill, final acceptance matrix, constitution audit); added public-deployment verification/troubleshooting/escalation entries; no Windows evidence claimed |
