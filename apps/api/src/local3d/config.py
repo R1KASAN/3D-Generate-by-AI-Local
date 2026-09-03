@@ -72,14 +72,31 @@ _ENV_TO_FIELD = {
     "WORKFLOW_MANIFEST_PATH": "workflow_manifest_path",
 }
 _SECRET_MARKERS = ("SECRET", "PASSWORD", "TOKEN", "API_KEY")
+_APPLICATION_ENV_PREFIXES = (
+    "APP_",
+    "GENERATION_",
+    "API_",
+    "COMFYUI_",
+    "STORAGE_",
+    "DATABASE_",
+    "MAX_",
+    "RETENTION_",
+    "MIN_",
+    "WORKFLOW_",
+)
 
 
 def _is_secret_like_name(name: str) -> bool:
     normalized = name.upper()
-    return any(
+    is_secret_like = any(
         normalized == marker
         or normalized.endswith(f"_{marker}")
         for marker in _SECRET_MARKERS
+    )
+    return is_secret_like and (
+        normalized in _SECRET_MARKERS
+        or normalized in _ENV_TO_FIELD
+        or normalized.startswith(_APPLICATION_ENV_PREFIXES)
     )
 
 
