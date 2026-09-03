@@ -86,6 +86,6 @@ LAN, or public deployment. Phase 7 begins unrun.
 
 ## Related
 
-- [Windows Phase 7 operator runbook (Thai source)](../../docs/operations/windows-phase7-operator-guide.th.md)
-- [Windows Phase 7 operator runbook (English)](../../docs/operations/windows-phase7-operator-guide.en.md)
+- [Windows AI server runbook, Phase 7–10 (Thai source)](../../docs/operations/windows-ai-server-runbook.th.md)
+- [Windows AI server runbook, Phase 7–10 (English)](../../docs/operations/windows-ai-server-runbook.en.md)
 - [AI runtime source register](../../docs/reference/ai-runtime-sources.md)
