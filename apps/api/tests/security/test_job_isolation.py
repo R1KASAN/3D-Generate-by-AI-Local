@@ -71,7 +71,12 @@ def test_job_storage_rejects_traversal_and_symlink_escape(tmp_path: Path) -> Non
 
     outside = tmp_path / "outside.txt"
     outside.write_text("secret", encoding="utf-8")
-    (paths.work_dir / "escape").symlink_to(outside)
+    try:
+        (paths.work_dir / "escape").symlink_to(outside)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
     with pytest.raises(PathViolation):
         storage.resolve_path(job_id, "work/escape")
 

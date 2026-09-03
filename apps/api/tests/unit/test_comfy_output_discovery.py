@@ -60,7 +60,12 @@ def test_resolver_rejects_path_escape_and_other_job_output(tmp_path: Path) -> No
     job_dir = _job_dir(tmp_path, job_id)
     outside = tmp_path / "outside.glb"
     outside.write_bytes(b"outside")
-    (job_dir / "model.glb").symlink_to(outside)
+    try:
+        (job_dir / "model.glb").symlink_to(outside)
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
     other = _job_dir(tmp_path, str(uuid4())) / "model.glb"
     other.write_bytes(b"other")
 

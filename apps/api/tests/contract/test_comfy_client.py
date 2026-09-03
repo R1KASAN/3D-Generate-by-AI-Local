@@ -107,6 +107,26 @@ async def test_reconcile_uses_queue_membership_when_history_has_no_entry() -> No
 
 
 @pytest.mark.asyncio
+async def test_reconcile_maps_running_queue_entry_to_processing() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/history/running-id":
+            return httpx.Response(200, json={})
+        if request.url.path == "/queue":
+            return httpx.Response(
+                200,
+                json={"queue_running": [[1, "running-id", {}, {}, "client"]], "queue_pending": []},
+            )
+        raise AssertionError(f"unexpected request {request.method} {request.url}")
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        observation = await client.reconcile(type("Handle", (), {"internal_id": "running-id"})())
+        assert observation.status is JobObservationStatus.PROCESSING
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_history_error_is_safe_and_does_not_leak_engine_payload() -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -209,12 +229,25 @@ async def test_upload_image_returns_server_side_name(tmp_path: Path) -> None:
     async def handler(request: httpx.Request) -> httpx.Response:
         assert request.method == "POST"
         assert request.url.path == "/upload/image"
+        assert b'filename="job-uuid.png"' in request.content
         return httpx.Response(200, json={"name": "input_00001_.png", "subfolder": "", "type": "input"})
 
     client = _client(httpx.MockTransport(handler))
     try:
-        name = await client.upload_image(image_path)
+        name = await client.upload_image(image_path, filename="job-uuid.png")
         assert name == "input_00001_.png"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_upload_image_rejects_path_like_override(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake-bytes")
+    client = _client(httpx.MockTransport(lambda _request: httpx.Response(500)))
+    try:
+        with pytest.raises(Exception, match="upload name is invalid"):
+            await client.upload_image(image_path, filename="../other-job.png")
     finally:
         await client.aclose()
 

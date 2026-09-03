@@ -40,8 +40,10 @@ coverage/
 
 # Runtime storage and generated service output
 /storage/
+/runtime-backups/
 /apps/api/storage/
 /apps/web/test-results/
+/deploy/windows/services/*.exe
 playwright-report/
 logs/
 tmp/

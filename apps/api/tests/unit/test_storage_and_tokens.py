@@ -44,7 +44,12 @@ def test_symlink_escape_is_rejected(tmp_path: Path) -> None:
     paths = storage.ensure_job(job_id)
     outside = tmp_path / "outside"
     outside.mkdir()
-    os.symlink(outside, paths.work_dir / "escape")
+    try:
+        os.symlink(outside, paths.work_dir / "escape")
+    except OSError as exc:
+        if getattr(exc, "winerror", None) == 1314:
+            pytest.skip("Windows symlink privilege is unavailable")
+        raise
 
     with pytest.raises(PathViolation):
         storage.resolve_path(job_id, "work/escape/secret.bin")

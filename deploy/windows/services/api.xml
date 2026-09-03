@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<service>
+  <id>Local3D-API</id>
+  <name>Local 3D API</name>
+  <description>Private loopback FastAPI controller for local 3D generation.</description>
+  <executable>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</executable>
+  <arguments>-NoLogo -NonInteractive -NoProfile -ExecutionPolicy Bypass -File "%BASE%\..\..\..\scripts\windows\start_api_service.ps1" -PythonPath "%BASE%\..\..\..\apps\api\.venv\Scripts\python.exe" -HostAddress 127.0.0.1 -Port 8000 -ComfyUrl http://127.0.0.1:8188</arguments>
+  <workingdirectory>%BASE%\..\..\..\apps\api</workingdirectory>
+  <env name="APP_ENV" value="production" />
+  <env name="GENERATION_ADAPTER" value="comfyui" />
+  <env name="API_HOST" value="127.0.0.1" />
+  <env name="API_PORT" value="8000" />
+  <env name="COMFYUI_BASE_URL" value="http://127.0.0.1:8188" />
+  <env name="COMFYUI_OUTPUT_ROOT" value="C:\Users\MetaHosP\ComfyUI\output" />
+  <env name="STORAGE_ROOT" value="%BASE%\..\..\..\storage" />
+  <env name="DATABASE_PATH" value="%BASE%\..\..\..\storage\jobs.sqlite3" />
+  <env name="WORKFLOW_MANIFEST_PATH" value="%BASE%\..\..\..\workflows\hunyuan3d\workflow-manifest.json" />
+  <startmode>Automatic</startmode>
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec" />
+  <depend>Local3D-ComfyUI</depend>
+  <log mode="roll-by-size-time">
+    <sizeThreshold>10485760</sizeThreshold>
+    <pattern>yyyyMMdd</pattern>
+    <keepFiles>7</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+    <allowservicelogon>true</allowservicelogon>
+  </serviceaccount>
+</service>

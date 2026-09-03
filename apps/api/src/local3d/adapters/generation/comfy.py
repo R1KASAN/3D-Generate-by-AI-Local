@@ -2,13 +2,18 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
+from typing import Any, TypeVar
 from uuid import UUID
 
 from .base import EngineHandle, EngineObservation, GenerationRequest, JobObservationStatus
 from .comfy_client import ComfyClient, ComfyClientError
 from .output_resolver import OutputDiscoveryError, OutputResolver
 from .workflow_mapper import WorkflowMapper, WorkflowMappingError
+
+
+_ResultT = TypeVar("_ResultT")
 
 
 class ComfyGenerationAdapter:
@@ -52,7 +57,7 @@ class ComfyGenerationAdapter:
         self._loop.call_soon_threadsafe(self._loop.stop)
         self._thread.join(timeout=5)
 
-    def _run(self, coro):  # type: ignore[no-untyped-def]
+    def _run(self, coro: Coroutine[Any, Any, _ResultT]) -> _ResultT:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()
 
@@ -62,7 +67,12 @@ class ComfyGenerationAdapter:
             workflow = self._mapper.map_request(
                 input_path=request.input_path, output_prefix=output_prefix
             )
-            uploaded_name = self._run(self._client.upload_image(request.input_path))
+            uploaded_name = self._run(
+                self._client.upload_image(
+                    request.input_path,
+                    filename=f"{request.job_id}{request.input_path.suffix.lower()}",
+                )
+            )
             _set_load_image_binding(workflow, self._mapper, uploaded_name)
             handle = self._run(self._client.submit(workflow))
         except (WorkflowMappingError, ComfyClientError) as exc:
@@ -114,7 +124,9 @@ class ComfyGenerationAdapter:
         return EngineObservation(status=JobObservationStatus.SUCCEEDED, candidates=(resolved,))
 
 
-def _set_load_image_binding(workflow: dict, mapper: WorkflowMapper, uploaded_name: str) -> None:
+def _set_load_image_binding(
+    workflow: dict[str, Any], mapper: WorkflowMapper, uploaded_name: str
+) -> None:
     """Overwrite the input binding(s) with the server-side uploaded filename.
 
     ``WorkflowMapper.map_request`` already wrote the local file's basename

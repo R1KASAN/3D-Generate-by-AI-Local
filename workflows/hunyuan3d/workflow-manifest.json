@@ -1,9 +1,11 @@
 {
-  "_status": "T059 pinning only. workflow_id/workflow_revision/hash/model/required_node_classes/input_bindings fields below are completed at T061 (shape smoke) and T075 (full textured workflow) once the actual workflow JSON is exported and pinned. Configuration text alone is not completion evidence for this manifest; see evidence/windows/comfyui-pinning.md for the running-instance and post-restart proof.",
+  "_status": "T075/T079 complete: the full Hunyuan3D 2.0 shape-plus-texture API workflow is exported, hash-pinned, and validated against the loopback ComfyUI instance. Runtime evidence is retained under evidence/windows/.",
   "workflow_id": "hunyuan3d-textured-glb",
-  "workflow_revision": "pending-T075",
-  "api_workflow_sha256": null,
-  "editable_workflow_sha256": null,
+  "workflow_revision": "hunyuan3d-textured-glb-2026-09-03",
+  "api_workflow_path": "api/hunyuan3d-textured-glb.json",
+  "editable_workflow_path": "editable/hunyuan3d-textured-glb.json",
+  "api_workflow_sha256": "f0ab76f6bfc65eb9bd130fe8d7dd2eadb80ec263a96aca76b7a24d78bb30d36a",
+  "editable_workflow_sha256": "b990fab37fbd800fdbbb9a9f2eba9e7eede3a4296d43be0015c13f21163e5f42",
   "comfyui_commit": "345c9190497c82cff53e71fb4ae00d1e135a6542",
   "comfyui_version": "0.34.0",
   "comfyui_repo": "https://github.com/comfyanonymous/ComfyUI",
@@ -38,6 +40,26 @@
       "size_bytes": 7366389768,
       "sha256": "6b519fc7242f78e9b5f47ea4d55668fe3d944a2d27332f4ca68d29a6ff603f5e",
       "note": "Used by the T061 shape smoke lane. Hash computed on the installed file 2026-09-03; re-verify if the file is ever replaced."
+    },
+    {
+      "name": "hunyuan3d-dit-v2-0-fp16 (shape, textured MVP lane)",
+      "path": "ComfyUI/models/diffusion_models/hy3dgen/hunyuan3d-dit-v2-0-fp16.safetensors",
+      "source": "https://huggingface.co/tencent/Hunyuan3D-2/resolve/main/hunyuan3d-dit-v2-0/model.fp16.safetensors",
+      "size_bytes": 4928151594,
+      "sha256": "ccda5cb4327111112a0aacd2b6798a7a6735e0ceece3b402b44999dada79595e",
+      "note": "Required by the T075 API workflow. The installed-file hash is recorded in evidence/windows/textured-model-hashes.md and must be re-verified if the file is replaced."
+    },
+    {
+      "name": "hunyuan3d-delight-v2-0 (texture preprocessing)",
+      "path": "ComfyUI/models/diffusers/hunyuan3d-delight-v2-0/",
+      "source": "https://huggingface.co/tencent/Hunyuan3D-2/tree/main/hunyuan3d-delight-v2-0",
+      "note": "Pinned by the upstream model identifier and installed snapshot; file-level hashes are recorded in evidence/windows/textured-model-hashes.md."
+    },
+    {
+      "name": "hunyuan3d-paint-v2-0 (texture synthesis)",
+      "path": "ComfyUI/models/diffusers/hunyuan3d-paint-v2-0/",
+      "source": "https://huggingface.co/tencent/Hunyuan3D-2/tree/main/hunyuan3d-paint-v2-0",
+      "note": "Pinned by the upstream model identifier and installed snapshot; file-level hashes are recorded in evidence/windows/textured-model-hashes.md."
     }
   ],
   "smoke_workflow": {
@@ -55,9 +77,32 @@
     "result_sha256": "8f3c9c3ce26a6f019131907cc555b5d18bfa2971df56a790d6c7cb9ecb8b15d8"
   },
   "required_node_classes": [
+    "CV2InpaintTexture",
+    "DownloadAndLoadHy3DDelightModel",
+    "DownloadAndLoadHy3DPaintModel",
+    "Hy3DApplyTexture",
+    "Hy3DBakeFromMultiview",
+    "Hy3DCameraConfig",
+    "Hy3DDelightImage",
+    "Hy3DDiffusersSchedulerConfig",
+    "Hy3DExportMesh",
+    "Hy3DGenerateMesh",
+    "Hy3DMeshUVWrap",
+    "Hy3DMeshVerticeInpaintTexture",
+    "Hy3DModelLoader",
+    "Hy3DPostprocessMesh",
+    "Hy3DRenderMultiView",
+    "Hy3DSampleMultiView",
+    "Hy3DVAEDecode",
+    "ImageCompositeMasked",
+    "ImageRemoveBackground+",
+    "ImageResize+",
     "LoadImage",
-    "Hy3D21ShapeSmokeOffloadMeshGen",
-    "Hy3DExportMesh"
+    "MaskPreview+",
+    "MaskToImage",
+    "PreviewImage",
+    "SolidMask",
+    "TransparentBGSession+"
   ],
   "available_node_classes_snapshot": [
     "DownloadAndLoadHy3DDelightModel", "DownloadAndLoadHy3DPaintModel", "Hy3DApplyTexture",
@@ -71,9 +116,13 @@
     "Hy3DSetMeshPBRTextures", "Hy3DTorchCompileSettings", "Hy3DUploadMesh",
     "Hy3DVAEDecode", "Hy3DVAELoader", "Hy3D_2_1SimpleMeshGen"
   ],
-  "input_bindings": [],
+  "input_bindings": [
+    { "node_id": "13", "field": "image" }
+  ],
   "output_binding": {
     "node_class": "Hy3DExportMesh",
+    "node_id": "99",
+    "field": "filename_prefix",
     "prefix_pattern": "jobs/{job_id}/model",
     "expected_extension": ".glb"
   },

@@ -73,14 +73,17 @@ class ComfyClient:
             raise ComfyClientError("ComfyUI returned no execution handle")
         return EngineHandle(internal_id=prompt_id)
 
-    async def upload_image(self, path: Path, *, subfolder: str = "") -> str:
+    async def upload_image(self, path: Path, *, filename: str | None = None, subfolder: str = "") -> str:
         """Upload a local image to ComfyUI's input area; return its server-side name."""
 
         try:
             data = path.read_bytes()
         except OSError as exc:
             raise ComfyClientError("input image could not be read") from exc
-        files = {"image": (path.name, data)}
+        upload_name = filename or path.name
+        if Path(upload_name).name != upload_name or upload_name in {"", ".", ".."}:
+            raise ComfyClientError("input upload name is invalid")
+        files = {"image": (upload_name, data)}
         payload: dict[str, Any] = {"overwrite": "true"}
         if subfolder:
             payload["subfolder"] = subfolder
@@ -142,7 +145,9 @@ class ComfyClient:
 
         snapshot = await self.queue()
         # Queue entries are opaque engine data; only membership is used.
-        if _queue_contains(snapshot, prompt_id, body):
+        if prompt_id in snapshot.running_ids:
+            return EngineObservation(status=JobObservationStatus.PROCESSING)
+        if prompt_id in snapshot.pending_ids:
             return EngineObservation(status=JobObservationStatus.QUEUED)
         return EngineObservation(
             status=JobObservationStatus.UNKNOWN,
@@ -308,11 +313,6 @@ def _status_progress(status: Any) -> int | None:
         return None
     value = status.get("progress")
     return value if isinstance(value, int) and 0 <= value <= 100 else None
-
-
-def _queue_contains(snapshot: QueueSnapshot, prompt_id: str, raw_body: Any) -> bool:
-    del raw_body
-    return prompt_id in snapshot.running_ids or prompt_id in snapshot.pending_ids
 
 
 def _queue_ids(entries: list[Any]) -> tuple[str, ...]:

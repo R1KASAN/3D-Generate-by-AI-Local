@@ -142,6 +142,22 @@ class GenerationJob:
         self.progress_message = message
         self.updated_at = utc_now()
 
+    def record_progress(self, progress_percent: int | None, message: str | None = None) -> JobEvent:
+        if self.status is not JobState.PROCESSING:
+            raise InvalidJobTransition("only processing jobs can record progress")
+        self.update_progress(progress_percent, message)
+        self._event_sequence += 1
+        return JobEvent(
+            job_id=self.job_id,
+            sequence=self._event_sequence,
+            event_type="progress",
+            from_status=JobState.PROCESSING,
+            to_status=JobState.PROCESSING,
+            progress_percent=self.progress_percent,
+            safe_message=self.progress_message,
+            created_at=self.updated_at or utc_now(),
+        )
+
     def transition(
         self,
         target: JobState | str,

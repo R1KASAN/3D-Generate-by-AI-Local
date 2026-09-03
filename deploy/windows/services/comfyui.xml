@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<service>
+  <id>Local3D-ComfyUI</id>
+  <name>Local 3D ComfyUI</name>
+  <description>Private loopback ComfyUI Hunyuan3D execution engine.</description>
+  <executable>C:\Users\MetaHosP\ComfyUI\venv\Scripts\python.exe</executable>
+  <arguments>main.py --listen 127.0.0.1 --port 8188 --temp-directory C:\Users\MetaHosP\ComfyUI\user\service-cache\temp --disable-all-custom-nodes --whitelist-custom-nodes ComfyUI-Hunyuan3DWrapper ComfyUI_essentials</arguments>
+  <workingdirectory>C:\Users\MetaHosP\ComfyUI</workingdirectory>
+  <env name="NUMBA_CACHE_DIR" value="C:\Users\MetaHosP\ComfyUI\user\service-cache\numba" />
+  <env name="HF_HOME" value="C:\Users\MetaHosP\ComfyUI\user\service-cache\huggingface" />
+  <env name="MPLCONFIGDIR" value="C:\Users\MetaHosP\ComfyUI\user\service-cache\matplotlib" />
+  <startmode>Automatic</startmode>
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec" />
+  <log mode="roll-by-size-time">
+    <sizeThreshold>10485760</sizeThreshold>
+    <pattern>yyyyMMdd</pattern>
+    <keepFiles>7</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+    <allowservicelogon>true</allowservicelogon>
+  </serviceaccount>
+</service>

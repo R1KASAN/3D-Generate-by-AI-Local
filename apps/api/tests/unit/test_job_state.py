@@ -96,6 +96,18 @@ def test_progress_is_nullable_but_when_present_is_bounded() -> None:
         job.update_progress(101, "Too far")
 
 
+def test_processing_job_records_repeated_progress_without_state_transition() -> None:
+    job = GenerationJob()
+    job.transition(JobState.PROCESSING, progress_percent=10)
+
+    event = job.record_progress(20, "Generating model")
+
+    assert job.status is JobState.PROCESSING
+    assert job.progress_percent == 20
+    assert event.event_type == "progress"
+    assert event.from_status is event.to_status is JobState.PROCESSING
+
+
 def test_safe_error_rejects_internal_details() -> None:
     with pytest.raises(ValueError, match="safe"):
         SafeJobError(code="bad", message="Traceback: /private/storage/jobs/secret.glb")
