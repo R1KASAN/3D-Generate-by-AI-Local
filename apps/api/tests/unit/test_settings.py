@@ -65,6 +65,17 @@ def test_secret_like_environment_values_are_rejected() -> None:
         )
 
 
+def test_unrelated_process_credentials_do_not_break_application_startup() -> None:
+    settings = load_settings(
+        {
+            "GENERATION_ADAPTER": "mock",
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "external-tool-credential",
+        }
+    )
+
+    assert settings.generation_adapter == "mock"
+
+
 def test_environment_aliases_are_loaded_without_posix_path_assumptions() -> None:
     settings = load_settings(
         {
