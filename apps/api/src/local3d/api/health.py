@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
 
 
 HealthStatus = Literal["ok", "degraded", "unavailable"]
@@ -24,5 +25,7 @@ async def live() -> dict[str, str]:
 
 
 @router.get("/ready")
-async def ready() -> dict[str, str]:
-    return health_payload("ok")
+async def ready(request: Request) -> JSONResponse:
+    if getattr(request.app.state, "adapter_ready", True) is False:
+        return JSONResponse(status_code=503, content=health_payload("unavailable"))
+    return JSONResponse(status_code=200, content=health_payload("ok"))

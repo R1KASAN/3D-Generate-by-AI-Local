@@ -23,6 +23,7 @@ class Settings(BaseModel):
     api_host: str = "127.0.0.1"
     api_port: int = Field(default=8000, ge=1, le=65535)
     comfyui_base_url: str = "http://127.0.0.1:8188"
+    comfyui_output_root: Path | None = None
     storage_root: Path = Path("storage")
     database_path: Path = Path("storage/jobs.sqlite3")
     max_upload_bytes: int = Field(default=MAX_APPROVED_UPLOAD_BYTES, gt=0, le=MAX_APPROVED_UPLOAD_BYTES)
@@ -62,6 +63,7 @@ _ENV_TO_FIELD = {
     "API_HOST": "api_host",
     "API_PORT": "api_port",
     "COMFYUI_BASE_URL": "comfyui_base_url",
+    "COMFYUI_OUTPUT_ROOT": "comfyui_output_root",
     "STORAGE_ROOT": "storage_root",
     "DATABASE_PATH": "database_path",
     "MAX_UPLOAD_BYTES": "max_upload_bytes",

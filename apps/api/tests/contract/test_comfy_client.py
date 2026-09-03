@@ -199,3 +199,35 @@ async def test_restart_reconciliation_does_not_submit_again() -> None:
 def test_comfy_client_rejects_non_loopback_base_url() -> None:
     with pytest.raises(ValueError, match="loopback"):
         ComfyClient("http://192.168.1.50:8188")
+
+
+@pytest.mark.asyncio
+async def test_upload_image_returns_server_side_name(tmp_path: Path) -> None:
+    image_path = tmp_path / "input.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake-bytes")
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/upload/image"
+        return httpx.Response(200, json={"name": "input_00001_.png", "subfolder": "", "type": "input"})
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        name = await client.upload_image(image_path)
+        assert name == "input_00001_.png"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_upload_image_rejects_missing_name_in_response() -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(200, json={"subfolder": ""})
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        with pytest.raises(Exception, match="no uploaded image name"):
+            await client.upload_image(Path(__file__))
+    finally:
+        await client.aclose()

@@ -5,6 +5,7 @@ import ipaddress
 import json
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
@@ -71,6 +72,33 @@ class ComfyClient:
         if not isinstance(prompt_id, str) or not prompt_id:
             raise ComfyClientError("ComfyUI returned no execution handle")
         return EngineHandle(internal_id=prompt_id)
+
+    async def upload_image(self, path: Path, *, subfolder: str = "") -> str:
+        """Upload a local image to ComfyUI's input area; return its server-side name."""
+
+        try:
+            data = path.read_bytes()
+        except OSError as exc:
+            raise ComfyClientError("input image could not be read") from exc
+        files = {"image": (path.name, data)}
+        payload: dict[str, Any] = {"overwrite": "true"}
+        if subfolder:
+            payload["subfolder"] = subfolder
+        try:
+            response = await self._http.post(
+                "/upload/image", files=files, data=payload, timeout=self._timeout
+            )
+            response.raise_for_status()
+            body = response.json()
+        except (httpx.TimeoutException, asyncio.TimeoutError) as exc:
+            raise ComfyClientError("ComfyUI upload timed out") from exc
+        except (httpx.HTTPError, ValueError) as exc:
+            raise ComfyClientError("ComfyUI upload failed") from exc
+
+        name = body.get("name") if isinstance(body, dict) else None
+        if not isinstance(name, str) or not name:
+            raise ComfyClientError("ComfyUI returned no uploaded image name")
+        return name
 
     async def queue(self) -> QueueSnapshot:
         body = await self._get_json("/queue")
