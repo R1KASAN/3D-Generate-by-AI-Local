@@ -12,7 +12,15 @@ vi.mock("@react-three/drei", () => ({
     props: { enablePan?: boolean; enableRotate?: boolean; enableZoom?: boolean },
     ref,
   ) {
-    useImperativeHandle(ref, () => ({ reset: vi.fn(() => resetCalls.push("reset")) }));
+    useImperativeHandle(ref, () => ({
+      reset: vi.fn(() => resetCalls.push("reset")),
+      setAzimuthalAngle: vi.fn(() => actionCalls.push("rotate")),
+      getAzimuthalAngle: vi.fn(() => 0),
+      dollyIn: vi.fn(() => actionCalls.push("zoom")),
+      dollyOut: vi.fn(() => actionCalls.push("zoom-in")),
+      target: { x: 0, y: 0 },
+      update: vi.fn(),
+    }));
     return (
       <div
         data-testid="orbit-controls"
@@ -28,23 +36,28 @@ vi.mock("@react-three/drei", () => ({
 }));
 
 const resetCalls: string[] = [];
+const actionCalls: string[] = [];
 
 describe("ModelViewer", () => {
   it("renders a loading-safe viewer with camera controls", () => {
     resetCalls.length = 0;
+    actionCalls.length = 0;
     render(<ModelViewer src="/api/v1/jobs/job/model" />);
 
     expect(screen.getByRole("region", { name: /3d model viewer/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /rotate/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /zoom/i })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /pan/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /zoom in/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /zoom out/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /pan/i })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /reset camera/i })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /zoom/i }));
-    expect(screen.getByRole("button", { name: /zoom/i })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("orbit-controls")).toHaveAttribute("data-enable-rotate", "false");
+    fireEvent.click(screen.getByRole("button", { name: /rotate/i }));
+    fireEvent.click(screen.getByRole("button", { name: /zoom in/i }));
+    fireEvent.click(screen.getByRole("button", { name: /zoom out/i }));
+    expect(actionCalls).toEqual(["rotate", "zoom-in", "zoom"]);
+    expect(screen.getByTestId("orbit-controls")).toHaveAttribute("data-enable-rotate", "true");
     expect(screen.getByTestId("orbit-controls")).toHaveAttribute("data-enable-zoom", "true");
-    expect(screen.getByTestId("orbit-controls")).toHaveAttribute("data-enable-pan", "false");
+    expect(screen.getByTestId("orbit-controls")).toHaveAttribute("data-enable-pan", "true");
     fireEvent.click(screen.getByRole("button", { name: /reset camera/i }));
     expect(resetCalls).toEqual(["reset"]);
   });

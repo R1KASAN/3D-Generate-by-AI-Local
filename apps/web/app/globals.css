@@ -10,3 +10,19 @@ body {
   margin: 0;
   font-family: system-ui, sans-serif;
 }
+
+.viewer-stage {
+  width: min(100%, 720px);
+  height: 480px;
+  min-height: 320px;
+  overflow: hidden;
+  touch-action: none;
+  background: #f3f4f6;
+}
+
+.viewer-stage canvas {
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+  touch-action: none;
+}
