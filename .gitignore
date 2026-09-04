@@ -17,6 +17,15 @@ apps/*/.env.*
 *.p12
 credentials/
 
+# Caddy runtime state (certificates, ACME account keys) - never commit
+/deploy/caddy/data/
+/deploy/caddy/config/
+/deploy/caddy/.env
+
+# WireGuard runtime configs contain private keys - only the .example templates are tracked
+/deploy/wireguard/*.conf
+!/deploy/wireguard/*.conf.example
+
 # Python
 __pycache__/
 *.py[cod]

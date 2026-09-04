@@ -1,0 +1,110 @@
+# Local3D public edge — Caddy reverse proxy (T087)
+#
+# Runs on the edge server holding 161.200.90.4. Terminates TLS, proxies the
+# public hostname to the GPU laptop's Next.js frontend over the WireGuard
+# tunnel (10.10.0.2:3000), and serves a maintenance page whenever the laptop
+# is unreachable. It never talks to the laptop's FastAPI (:8000) or ComfyUI
+# (:8188) directly — those stay loopback-only on the laptop, and the Next.js
+# process forwards /api/* to them itself (apps/web/next.config.ts).
+#
+# Required environment (see .env.example):
+#   PUBLIC_HOSTNAME  - the approved public domain name (never a bare IP; see
+#                       docs/operations/public-cutover.md if only an IP cert
+#                       is available)
+#   ACME_EMAIL       - contact address for Let's Encrypt expiry notices
+#   UPSTREAM_ORIGIN  - http://10.10.0.2:3000 (the laptop's tunnel address)
+#
+# Policy invariants enforced here and asserted by tests/security/test_caddy_contract.py:
+#   - no basic_auth / site-wide login (owner-approved public-entry policy)
+#   - upstream is the tunnel address only - never 0.0.0.0, ::, or :8188
+#   - X-Job-Token is never logged
+#   - request bodies are capped, but the API's 10 MiB policy is authoritative
+#   - only the approved edge address may ever be configured anywhere in this
+#     repository's deploy/ tree; see docs/operations/public-cutover.md
+
+{
+	# No remote admin API on this box.
+	admin off
+
+	email {$ACME_EMAIL}
+}
+
+{$PUBLIC_HOSTNAME} {
+	# --- Security headers ---
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+
+	# --- Absurdity guard only. The API enforces the real 10 MiB policy
+	# (apps/api/src/local3d/config.py: MAX_APPROVED_UPLOAD_BYTES) and returns
+	# a branded 413 JSON error. This limit is intentionally looser (12 MiB)
+	# so multipart framing overhead never causes Caddy to reject a file the
+	# API would have accepted.
+	request_body {
+		max_size 12MB
+	}
+
+	# --- Reverse proxy to the GPU laptop over the WireGuard tunnel ---
+	# Single upstream: Next.js already forwards /api/* to FastAPI on the
+	# laptop's loopback interface, so Caddy never needs to reach :8000/:8188.
+	reverse_proxy {$UPSTREAM_ORIGIN} {
+		lb_try_duration 3s
+		fail_duration 10s
+		health_uri /
+		health_interval 15s
+		health_timeout 5s
+
+		# Fail fast: the laptop being unreachable is an expected, routine
+		# state (mobility by design), not an incident to hang a request on.
+		transport http {
+			dial_timeout 3s
+			response_header_timeout 10s
+		}
+	}
+
+	# --- Maintenance page when the laptop/tunnel is down ---
+	handle_errors {
+		@upstreamDown expression {http.error.status_code} in [502, 503, 504]
+		handle @upstreamDown {
+			root * /srv/caddy/maintenance
+			rewrite * /maintenance.html
+			file_server
+			header Retry-After "30"
+		}
+		handle {
+			respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
+		}
+	}
+
+	# --- Access log with token redaction ---
+	# Caddy auto-redacts Authorization/Cookie but NOT arbitrary headers, so
+	# X-Job-Token must be deleted explicitly or it lands in cleartext in the
+	# log file (this would violate T091's no-token-in-logs requirement).
+	log {
+		output file {$CADDY_LOG_PATH:-/var/log/caddy/local3d-access.log} {
+			roll_size 10MB
+			roll_keep 7
+		}
+		format filter {
+			wrap json
+			fields {
+				request>headers>X-Job-Token delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+			}
+		}
+	}
+}
+
+# Catch-all: reject requests that arrive with the bare IP or an unexpected
+# Host header instead of the approved hostname. Without this, a request to
+# https://161.200.90.4/ with no SNI/matching Host would fall through to the
+# default Caddy behavior instead of being explicitly refused.
+:443, :80 {
+	tls internal
+	respond "Not found" 404
+}

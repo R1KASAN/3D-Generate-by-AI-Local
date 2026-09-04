@@ -10,6 +10,58 @@ Sync Impact Report
   Quality Gates.
 - Removed sections: none.
 - Follow-up TODOs: none.
+
+Sync Impact Report (1.0.0 -> 1.1.0, 2026-09-04)
+- Version change: 1.0.0 -> 1.1.0 (MINOR: materially expanded Principle III)
+- Amended principles: III. Security and Private-Service Boundary - the
+  shared-authentication/IP-allowlisting/VPN mandate for public deployment is
+  replaced with an explicit either/or: (a) owner-approved shared
+  authentication/IP allowlisting/VPN, or (b) an owner-approved per-resource
+  capability-token policy with no site-wide login, provided the token is
+  never logged and forwarding/verification is evidenced. Also clarifies that
+  a private point-to-point tunnel used solely to reach a mobile compute node
+  that is never itself the public entry point (e.g. the edge-to-GPU-worker
+  WireGuard link in the public-deployment plan) is an internal binding under
+  this principle, not "VPN access to the deployment" - the internal ports it
+  carries MUST still never be publicly reachable.
+- Rationale: the owner approved a public-entry policy of "no site-wide login,
+  per-job X-Job-Token only" on 2026-09-04 (see
+  evidence/public-deployment/owner-gate.md), which the prior wording of
+  Principle III did not permit. This amendment brings the constitution into
+  agreement with that written approval instead of leaving a standing
+  contradiction between the two documents.
+- Affected artifacts: evidence/public-deployment/owner-gate.md (references
+  this version); specs/001-local-3d-generation/tasks.md (T097 constitution
+  audit checks against this version); docs/operations/public-cutover.md.
+- Follow-up TODOs: none - this is a completed amendment, not a placeholder.
+
+Sync Impact Report (1.1.0 -> 1.2.0, 2026-09-05)
+- Version change: 1.1.0 -> 1.2.0 (MINOR: materially expanded Principle III)
+- Amended principles: III. Security and Private-Service Boundary - the
+  absolute "token is never written to logs" clause is scoped to logs the
+  project controls or configures, and a new paragraph recognises that an
+  owner-approved TLS-terminating third-party proxy necessarily handles the
+  credential in cleartext. That residual exposure is permitted only under
+  four conjunctive conditions (written owner approval; provider-side
+  credential logging disabled wherever that control exists; the exposure
+  recorded in security evidence naming the provider; encrypted AND
+  certificate-validated proxy-to-origin hop), and the project is forbidden
+  from claiming end-to-end non-logging while such a proxy is in the path.
+- Rationale: /speckit-analyze finding N1 against feature
+  002-cloudflare-public-entry. The owner selected a proxied public entry on
+  2026-09-05 in which Cloudflare terminates TLS at the edge. Under the prior
+  absolute wording that architecture could not comply, because the provider's
+  logging behaviour is outside project control. Rather than reinterpret the
+  principle or ignore the conflict, the clause is scoped to what the project
+  can actually govern, and the residual is made explicit, bounded, and
+  evidenced. The prohibition on overclaiming is deliberate: the honest
+  statement is narrower than the one the old wording invited.
+- Affected artifacts: specs/002-cloudflare-public-entry/spec.md (FR-011,
+  FR-011a, SC-006, SC-006a); specs/002-cloudflare-public-entry/plan.md
+  (Constitution Check); specs/002-cloudflare-public-entry/tasks.md (T009,
+  T014, T053); evidence/public-deployment/owner-gate.md;
+  evidence/public-deployment/residual-exposure.md (new).
+- Follow-up TODOs: none.
 -->
 
 # Local 3D Generative AI Server Constitution
@@ -39,10 +91,38 @@ HTTPS on port 443 is the sole Internet-facing application entry point; port 80
 is permitted only for redirect or certificate issuance. Frontend, backend, AI
 workflow engine, database, and remote-administration ports MUST NOT be publicly
 reachable. Browsers MUST call the backend only, never the AI workflow engine.
-Public deployment requires owner-approved shared authentication, IP allowlisting,
-or VPN access. Upload validation MUST check content, size, and supported format;
-user-controlled names and paths are untrusted. Secrets, credentials, private
-IPs, and production configuration MUST NOT enter Git.
+Public deployment requires one of the following, owner-approved in writing:
+(a) shared authentication, IP allowlisting, or VPN access; or (b) a
+per-resource capability-token policy with no site-wide login, where the
+token is never written to any log the project controls or configures, and
+its issuance/verification behavior is evidenced (e.g. uniform 404 for
+missing/wrong tokens). "Controls or configures" covers every log produced
+by a project-operated component - reverse proxy, application, and any
+project-run intermediary - and also any third-party log whose content the
+project can suppress through available configuration; where such a control
+exists the project MUST use it.
+
+An owner-approved third-party proxy that terminates TLS at the network edge
+necessarily processes the capability token in cleartext in order to forward
+it. This is a recognised residual exposure, not a violation of the clause
+above, provided ALL of the following hold: the proxy is owner-approved in
+writing; credential logging is disabled wherever the provider exposes that
+control; the residual exposure is recorded in the project's security
+evidence, naming the provider and what it can observe; and the connection
+from that proxy to the origin is both encrypted and certificate-validated.
+The project MUST NOT claim the token is unlogged end-to-end while such a
+proxy is in the path - it may claim only that no project-controlled log
+contains it, and MUST state where the boundary of that claim lies. A
+private
+point-to-point tunnel used only to let a public-facing edge reach a
+non-public compute node (never itself exposed as the public entry point) is
+an internal binding, not "VPN access to the deployment," under this
+principle - the ports it carries MUST still never be publicly reachable, and
+its own address scope MUST stay as narrow as the specific peer it connects,
+never a wide allowlist or a full-tunnel default route. Upload validation
+MUST check content, size, and supported format; user-controlled names and
+paths are untrusted. Secrets, credentials, private IPs, and production
+configuration MUST NOT enter Git.
 
 ### IV. Job and File Isolation
 
@@ -126,4 +206,4 @@ semantic-version change: MAJOR for incompatible governance changes, MINOR for ne
 or materially expanded principles, and PATCH for clarifications only. The owner
 is the final authority for all ownership-critical decisions.
 
-**Version**: 1.0.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-02
+**Version**: 1.2.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-05

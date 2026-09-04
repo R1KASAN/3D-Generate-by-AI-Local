@@ -1,0 +1,30 @@
+# WireGuard config for the EDGE server (161.200.90.4) - copy to edge.conf,
+# fill in real keys, and NEVER commit the filled-in file (git-ignored).
+#
+# Mirrors upstream.conf.example. AllowedIPs here is equally narrow: this
+# peer entry accepts tunnel traffic from the laptop's tunnel address only,
+# regardless of what physical network the laptop is actually on.
+#
+# Deliberately no Endpoint here: the laptop moves between networks (campus,
+# home, mobile hotspot) and its source address changes every time. WireGuard
+# on the edge learns the laptop's current source address from the most
+# recent authenticated handshake and sends return traffic there - this is
+# the mechanism that makes "the laptop can be anywhere" actually work. Do
+# not add a static Endpoint for the laptop peer.
+
+[Interface]
+# Generate with: wg genkey | tee edge.key | wg pubkey > edge.pub
+PrivateKey = <edge-private-key>
+Address = 10.10.0.1/24
+ListenPort = 51820
+
+[Peer]
+# The laptop's public key (from upstream.conf.example's [Interface]
+# PrivateKey -> wg pubkey).
+PublicKey = <laptop-public-key>
+
+# Only the laptop's fixed tunnel address - not a subnet, not 0.0.0.0/0.
+AllowedIPs = 10.10.0.2/32
+
+# No Endpoint: see note above. The laptop always dials in; the edge never
+# needs to dial out to find it.

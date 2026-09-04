@@ -7,7 +7,17 @@ preserving the private-service boundary:
 |---|---|---|---|
 | `Local3D-ComfyUI` | ComfyUI Python runtime | `127.0.0.1:8188` | — |
 | `Local3D-API` | FastAPI/Uvicorn | `127.0.0.1:8000` | `Local3D-ComfyUI` |
-| `Local3D-Web` | Next.js production server | `127.0.0.1:3000` | `Local3D-API` |
+| `Local3D-Web` | Next.js production server | `10.10.0.2:3000` (WireGuard tunnel address) | `WireGuardTunnel$upstream`, `Local3D-API` |
+
+`Local3D-Web` binds the WireGuard tunnel address, not loopback, so the
+public edge server (`161.200.90.4`) can reach it over the tunnel while
+`Local3D-API` and `Local3D-ComfyUI` stay loopback-only. It starts via
+`scripts/windows/start_web_service.ps1`, which waits for the tunnel address
+to exist and for the edge to be reachable before invoking `next start` -
+see `docs/operations/tunnel-setup.md`. This depends on the WireGuard
+tunnel service the operator names when installing WireGuard for Windows;
+`WireGuardTunnel$upstream` in `web.xml` must match that name exactly or the
+`<depend>` will fail to resolve.
 
 Install WinSW beside each copied XML and wrapper executable under a
 machine-local installation root. The definitions use `%BASE%` so the project

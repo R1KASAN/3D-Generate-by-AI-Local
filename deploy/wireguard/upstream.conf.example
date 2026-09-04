@@ -1,0 +1,40 @@
+# WireGuard config for the GPU LAPTOP - copy to upstream.conf, fill in real
+# keys, and NEVER commit the filled-in file (git-ignored; see .gitignore).
+#
+# This is an application tunnel between this laptop and the public edge
+# (161.200.90.4), not a full-machine VPN. AllowedIPs is deliberately narrow
+# so only traffic to the edge's tunnel address goes through WireGuard -
+# everything else (normal browsing, university/home/hotspot traffic) is
+# unaffected. Never widen AllowedIPs to 0.0.0.0/0 here.
+#
+# The laptop is the side that initiates the connection (Endpoint = edge's
+# public IP). This is what lets the laptop move between networks freely:
+# it can always dial out to a fixed, publicly reachable address regardless
+# of what NAT or network it is currently behind.
+
+[Interface]
+# Generate with: wg genkey | tee laptop.key | wg pubkey > laptop.pub
+PrivateKey = <laptop-private-key>
+Address = 10.10.0.2/24
+
+[Peer]
+# The edge's public key (from edge.conf.example's [Interface] PrivateKey ->
+# wg pubkey).
+PublicKey = <edge-public-key>
+
+# Fixed, always-reachable edge address. Only 161.200.90.4 is approved -
+# see the plan's hard constraint on .3 vs .4.
+Endpoint = 161.200.90.4:51820
+
+# Only the edge's tunnel address - NOT 0.0.0.0/0. This is an app tunnel,
+# not a VPN: do not route this laptop's general internet traffic through
+# the university edge.
+AllowedIPs = 10.10.0.1/32
+
+# REQUIRED. The laptop is behind NAT (university/home/hotspot) and must
+# send a keepalive packet at least this often, or the NAT's connection
+# tracking entry expires and the edge can no longer reach back in. Without
+# this the symptom is "worked at first, then silently died after a while
+# of inactivity" - very hard to diagnose after the fact. 25 seconds is
+# WireGuard's own recommended value for typical NAT/firewall timeouts.
+PersistentKeepalive = 25

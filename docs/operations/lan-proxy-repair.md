@@ -123,8 +123,30 @@ This does not affect loopback access at `127.0.0.1:3000`.
 | Internal API or ComfyUI ports are reachable | Project Owner / Windows administrator | Treat as a security issue and repair the boundary before use. |
 | The LAN proxy will not bind after Steps 1-4 | Windows administrator | Provide sanitized service and proxy output. |
 
+## Superseded by the public/mobile deployment (2026-09-04)
+
+The LAN portproxy approach this runbook repairs is being replaced by the
+WireGuard-tunnel architecture in
+`C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` and
+`docs/operations/public-cutover.md`. Once that cutover happens:
+
+- `deploy/firewall/configure-upstream-boundary.ps1` **removes the
+  `172.20.10.6:3000` portproxy entry permanently** as one of its
+  preconditions (it refuses to run at all while any portproxy entry
+  exists) and removes the `Local3D LAN Web Entry` firewall rule.
+- **Do not recreate this portproxy afterward.** It was found still holding
+  a live listening socket for an address (`172.20.10.6`) the laptop no
+  longer had — if the laptop ever rejoins a `172.20.10.x`-style hotspot
+  network again post-cutover, a stale portproxy entry would silently
+  reopen port 3000 with no firewall scoping. `Local3D-Web` binds the
+  WireGuard tunnel address (`10.10.0.2`) instead, which is not reachable
+  from an ordinary LAN/hotspot at all.
+- This runbook remains valid only for a machine that is still running the
+  older LAN-only topology and has not yet been through public cutover.
+
 ## History
 
 | Date | Run By | Notes |
 |---|---|---|
 | 2026-09-04 | Codex diagnostic | Found a configured but non-listening LAN proxy for `172.20.10.6:3000`; repair commands recorded for operator execution. |
+| 2026-09-04 | Claude (public-deployment planning) | Superseded by the WireGuard-tunnel architecture; this portproxy is removed permanently at cutover, not repaired. |

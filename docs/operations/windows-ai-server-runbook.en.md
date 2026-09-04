@@ -36,11 +36,29 @@ If anyone proposes running the AI server on macOS, or using macOS results to clo
 
 ## Network boundary (important for Phase 11)
 
-Phase 11 opens ports 80/443 to the Internet through **the Windows operator's own router**, not the Owner's router.
+**Updated 2026-09-04:** this project does not use home/office router port
+forwarding. The Owner obtained a directly-assigned university public IP
+(`161.200.90.4`, memo วฟ.2174/2567) for an **edge server**, which is a
+separate machine from the Windows GPU server this runbook otherwise
+describes. The GPU server never holds a public IP; it connects outward to
+the edge over a WireGuard tunnel. See
+`C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` and
+`docs/operations/public-cutover.md` for the full architecture.
 
-- The operator must consent to forwarding ports on their own home/office network — this is the operator's decision as the owner of that network, not something the Owner can simply order.
-- If the operator is not comfortable exposing their own router to the public, they must say so to the Owner **before** starting T085. There are alternatives the constitution also permits (such as VPN access).
-- The domain/DDNS used will point at the operator's network IP only — no service is relocated to a different machine.
+- There is no "operator's own router" decision to make — the gating
+  authority is the **university border firewall**, not a consumer router.
+  It must permit inbound `443/tcp`, `80/tcp`, and `51820/udp` to
+  `161.200.90.4` and nothing else.
+- The Windows GPU server stays on whatever network it is physically on
+  (university, home, mobile hotspot) and is reachable only via the tunnel
+  — it is explicitly designed to be able to move between networks freely.
+  Do not attempt to forward ports on that machine's own router; nothing in
+  this deployment depends on that.
+- `161.200.90.3` is allocated to a different purpose and must never be
+  configured, forwarded, or probed by anything related to this project.
+- The domain used will point at the edge server's fixed address
+  (`161.200.90.4`), not at the GPU server's own network IP, which changes
+  as the GPU server moves.
 
 ## Source of truth
 
@@ -121,7 +139,7 @@ Only **API-format** exported workflows may be used (not the regular workflow fil
 - [ ] The PC has sufficient free disk for manifest-defined runtime/model assets.
 - [ ] ComfyUI, FastAPI, and browser services are not Internet-facing before Phase 11; ports `3000`, `8000`, `8188`, and `3389` remain private at all other times.
 - [ ] The operator has read every Source-of-truth artifact.
-- [ ] (For Phase 11) The operator consents to forwarding ports 80/443 on their own router, or has told the Owner before T085 if that is not comfortable.
+- [ ] (For Phase 11) University IT has confirmed the border firewall permits inbound 443/tcp, 80/tcp, and 51820/udp (WireGuard) to `161.200.90.4` only — there is no operator-router decision in this topology.
 
 ## Procedure
 
@@ -434,9 +452,9 @@ Send the Owner the following and **wait for written approval** before touching a
 | 2 | The model-license/territory scope of permitted users |
 | 3 | Which domain or DDNS provider will be used |
 | 4 | Who controls the DNS/DDNS account |
-| 5 | The current Public IP (revalidated fresh right now, not an old value) |
-| 6 | Whether that IP is static, dynamic, or behind CGNAT |
-| 7 | Whether the router can actually forward ports 80/443 |
+| 5 | The current Public IP (revalidated fresh right now against `161.200.90.4`, not the assignment memo) |
+| 6 | Whether that IP is static, dynamic, or behind CGNAT (the assignment is static/direct, but this must still be observed, not assumed) |
+| 7 | Whether the university border firewall permits inbound 443/tcp, 80/tcp, and 51820/udp to `161.200.90.4` |
 
 Record the approval (or BLOCKED) in `evidence/public-deployment/owner-gate.md`.
 
@@ -476,15 +494,15 @@ Create `deploy/firewall/configure-public-boundary.ps1` (least-privilege) and `de
 
 **If it fails:** if the verifier finds an internal port open, stop immediately — this security boundary must never be relaxed.
 
-### Step 26: T089 — DNS/DDNS and router forwarding
+### Step 26: T089 — DNS and university border-firewall confirmation
 
-Apply only the DNS/DDNS and port forwarding the Owner approved in T085. Forward only 80/443.
+Create the DNS A record the Owner approved in T085, pointed at `161.200.90.4`. Confirm in writing with university IT that the border firewall permits only inbound 443/tcp, 80/tcp, and 51820/udp (WireGuard) to that address — there is no router to forward ports on in this topology.
 
 Record redacted before/after evidence (partially masking the IP as appropriate) in `evidence/public-deployment/dns-router.md`.
 
-**Expected result:** public DNS resolves to the revalidated Public IP, no CGNAT/routing blocker remains, and **no internal port forward exists beyond 80/443**.
+**Expected result:** public DNS resolves to the revalidated Public IP, no CGNAT/routing blocker remains, and **no internal port forward exists** — the WireGuard tunnel to the GPU laptop is a private point-to-point link between the edge and the laptop, not a port forward, and never routes anything beyond the laptop's tunnel address.
 
-**If it fails:** if CGNAT appears or the router can't forward as reported in T085, stop and go back to the Owner immediately. Never look for another port to work around it.
+**If it fails:** if CGNAT appears, or the border firewall does not actually permit 443/80/51820 as reported in T085, stop and go back to the Owner immediately. Never look for another port or protocol to work around it.
 
 ### Step 27: T090 — TLS certificate and redirect validation
 
@@ -591,7 +609,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 - [ ] `evidence/operations/runbook-drill.md` traces a Job ID across its full lifecycle.
 - [ ] `evidence/final/mvp-acceptance.md` maps every SC/FR to real evidence.
 - [ ] `evidence/final/constitution-audit.md` has an honest PASS or BLOCKED verdict.
-- [ ] The three Phase 11 items have been reported to the Owner (domain/DDNS, IP type, router 80/443).
+- [ ] The Phase 11 items have been reported to the Owner (domain, IP type, university border-firewall 443/80/51820 confirmation).
 
 ## Troubleshooting
 
@@ -610,7 +628,8 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | Services do not start after reboot | Dependency order or service identity is wrong | Fix the service definition; starting it by hand is not a pass |
 | A LAN device can reach 8000/8188 | Wrong bind or firewall rule | Stop at T083 immediately — this is a security boundary |
 | `owner-gate.md` still has unapproved items | Not all questions asked, or the Owner hasn't answered yet | Stop at T085; never start T086 before every item is approved |
-| Router can't forward 80/443 (ISP block or CGNAT) | The operator's network doesn't support port forwarding | Stop at T089; report to the Owner to consider an alternative (VPN) instead of forcing it open |
+| University border firewall won't permit 443/80/51820 to `161.200.90.4` | IT policy hasn't approved it yet, or the request targeted the wrong address | Stop at T089; report to the Owner. Never substitute `161.200.90.3` or another port to work around it. |
+| WireGuard tunnel won't come up between edge and laptop | Border firewall doesn't actually have 51820/udp open, `PersistentKeepalive` missing, or a competing VPN adapter took the default route | See `docs/operations/tunnel-setup.md` Troubleshooting; this is diagnosed at the tunnel layer, never fixed by restarting the web service |
 | A certificate warning or self-signed cert appears | DNS hasn't propagated yet, or the domain is wrong | Stop at T090; never bypass the warning, never deploy while a warning exists |
 | A job token or other secret appears in a captured log | Logging isn't masking sensitive values | Stop at T091 immediately — treat this as a leak and invalidate the affected token or rotate the affected secret |
 | An internal port is reachable from outside during T092 | Firewall rules don't cover it fully | Stop immediately; take the service down until the firewall is fixed |
@@ -621,7 +640,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 - Uninstall or roll back only components the operator just installed and that have a documented rollback.
 - Never delete models, evidence, the database, or project storage just to "try again".
 - If Phase 10 services misbehave, stop the services and go back to manual runs to debug — never open extra ports to work around it.
-- If Phase 11 has a problem after going public, **close the router's port forward first**, then debug — never leave it exposed while you investigate.
+- If Phase 11 has a problem after going public, **disable the edge's public firewall rules first** (`deploy/firewall/configure-public-edge.ps1` was applied — remove or disable the rules it created), then debug — never leave it exposed while you investigate.
 - After a rollback, re-run the T058 inventory and record what changed.
 
 ## Escalation
@@ -635,7 +654,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | GLB repeatedly fails validation | Project Owner | Attach validation output; never lower the criteria yourself |
 | A LAN client can reach an internal port | Project Owner | Report immediately as a security issue |
 | A public-exposure request arrives before Phase 10 PASS | Project Owner | Refuse and cite the constitution/security boundary |
-| The operator isn't comfortable opening their own router to the public | Project Owner | Say so before starting T085 so the Owner can consider an alternative (VPN) |
+| The edge server's management access (SSH/console) isn't confirmed working yet | Project Owner / university IT | Say so before running `configure-public-edge.ps1` — that script pre-flight-checks this, but the decision of which management path to use (Stage 0.1 of the deployment plan) must be made first |
 | Any T085 item cannot be answered | Project Owner | Record `BLOCKED` in `owner-gate.md` without touching public infrastructure |
 | A job token or other secret leaks during T091 | Project Owner | Report immediately as a security incident and invalidate the affected token or rotate the affected secret |
 | A public-exposure request arrives before the owner gate passes | Project Owner | Refuse and cite Constitution principle IX plus T085 |
@@ -648,3 +667,4 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | 2026-09-03 | Owner (macOS) | v1.1 — Git baseline created and pushed to `R1KASAN/3D-Generate-by-AI-Local` (public) after secret review; Step 0 changed from "create baseline" to "clone and verify baseline"; added Scope boundary and ComfyUI API integration rules |
 | 2026-09-03 | Owner (macOS) | v2.0 — Renamed from `windows-phase7-operator-guide.*` to `windows-ai-server-runbook.*`; scope extended from Phase 7 only to Phase 7–10 (ending at a usable LAN deployment); added the Hardware boundary forbidding macOS as the AI server; added the Phase 11 preparation section requesting only domain/DDNS, IP type, and router 80/443 capability, without asking for the Public IP number; no Windows evidence claimed |
 | 2026-09-03 | Owner (macOS) | v3.0 — Corrected a misunderstanding that Phase 10 required the Owner's own physical device (a second device belonging to the operator is sufficient); extended scope from Phase 7–10 to the full Phase 7–12 per the original spec, per the Owner's decision to proceed all the way to public deployment; added the Network boundary section explaining Phase 11 opens ports on the operator's own router and needs the operator's own consent, not just the Owner's instruction; added Steps 22–34 covering T085–T097 in full (owner-approval gate, Caddy, firewall, DNS/router, TLS, external auth test, port scan, external acceptance, negative-case security testing, operator runbook drill, final acceptance matrix, constitution audit); added public-deployment verification/troubleshooting/escalation entries; no Windows evidence claimed |
+| 2026-09-04 | Claude (public-deployment planning) | v4.0 — Replaced the operator-own-router model with the actual approved topology: a university-assigned public IP (`161.200.90.4`) on a separate edge server, reached over a WireGuard tunnel from the GPU laptop, so the laptop can move between networks. Rewrote the Network boundary section, Step 22's owner-gate items, Step 26 (T089, now a border-firewall confirmation rather than router forwarding), and the related checklist/troubleshooting/escalation entries. Constitution amended to 1.1.0 in the same change to permit the approved no-site-wide-login policy explicitly. See `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` for full rationale; no Windows evidence claimed. |

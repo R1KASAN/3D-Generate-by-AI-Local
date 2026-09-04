@@ -36,11 +36,12 @@
 
 ## Network boundary (สำคัญสำหรับ Phase 11)
 
-Phase 11 จะเปิด port 80/443 ออก internet ผ่าน **router ของเครื่อง Windows operator เอง** ไม่ใช่ router ของ Owner
+**อัปเดต 2026-09-04:** โปรเจกต์นี้ไม่ได้ใช้วิธี port forward ผ่าน router บ้าน/ที่ทำงานแล้ว Owner ได้รับ Public IP ที่จัดสรรตรงจากมหาวิทยาลัย (`161.200.90.4` ตามบันทึกข้อความ วฟ.2174/2567) สำหรับ **edge server** ซึ่งเป็นคนละเครื่องกับ Windows GPU server ที่ runbook นี้อธิบายอยู่ GPU server ไม่ได้ถือ public IP เอง แต่เชื่อมต่อออกไปหา edge ผ่าน WireGuard tunnel ดูรายละเอียดเต็มที่ `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` และ `docs/operations/public-cutover.md`
 
-- Operator ต้องยินยอมให้เปิด port forward บนเครือข่ายบ้าน/ที่ทำงานของตัวเอง — เป็นสิทธิ์ของ operator ในฐานะเจ้าของเครือข่ายนั้น ไม่ใช่แค่ Owner สั่งแล้วต้องทำตาม
-- ถ้า operator ไม่สะดวกเปิด router ของตัวเองออก public ให้แจ้ง Owner ทันที **ก่อน** เริ่ม T085 — มีทางเลือกอื่น (เช่น VPN) ที่ constitution อนุญาตไว้เช่นกัน
-- domain/DDNS ที่ใช้จะชี้มาที่ IP ของเครือข่าย operator เท่านั้น ไม่มีการย้าย service ไปเครื่องอื่น
+- ไม่มีการตัดสินใจเรื่อง "router ของ operator" อีกต่อไป — ผู้มีอำนาจอนุมัติคือ **border firewall ของมหาวิทยาลัย** ไม่ใช่ router ทั่วไป ต้องอนุญาต inbound `443/tcp`, `80/tcp`, และ `51820/udp` มาที่ `161.200.90.4` เท่านั้น
+- Windows GPU server อยู่บนเครือข่ายจริงที่มันเสียบอยู่ตอนนั้น (มหาวิทยาลัย/บ้าน/hotspot มือถือ) และเข้าถึงได้ผ่าน tunnel เท่านั้น — ออกแบบมาให้ย้ายเครือข่ายได้อิสระโดยเจตนา ห้าม forward port บน router ของเครื่องนั้นเอง ไม่มีส่วนใดของ deployment นี้พึ่งพาสิ่งนั้น
+- `161.200.90.3` ถูกจัดสรรไว้ใช้งานอื่น ห้ามตั้งค่า, forward, หรือ probe ด้วยสิ่งใดที่เกี่ยวข้องกับโปรเจกต์นี้เด็ดขาด
+- domain ที่ใช้จะชี้ไปที่ IP คงที่ของ edge server (`161.200.90.4`) ไม่ใช่ IP เครือข่ายของ GPU server เองซึ่งเปลี่ยนไปตามที่มันย้ายไป
 
 ## Source of truth
 
@@ -121,7 +122,7 @@ Expose :8188, :8000, :3000, or :3389 publicly
 - [ ] Windows PC มีพื้นที่ว่างเพียงพอสำหรับ runtime/model ตาม manifest
 - [ ] ComfyUI, FastAPI และ browser ยังไม่ถูกเปิดออก Internet ก่อนถึง Phase 11; ports `3000`, `8000`, `8188`, `3389` ต้องเป็น private เสมอ
 - [ ] Operator อ่าน artifact ใน Source of truth ครบแล้ว
-- [ ] (สำหรับ Phase 11) Operator ยินยอมเปิด port forward 80/443 บน router เครือข่ายของตัวเอง หรือแจ้ง Owner ก่อนถึง T085 ถ้าไม่สะดวก
+- [ ] (สำหรับ Phase 11) IT มหาวิทยาลัยยืนยันแล้วว่า border firewall อนุญาต inbound 443/tcp, 80/tcp, และ 51820/udp (WireGuard) มาที่ `161.200.90.4` เท่านั้น — ไม่มีการตัดสินใจเรื่อง router ของ operator ใน topology นี้
 
 ## Procedure
 
@@ -434,9 +435,9 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 | 2 | ขอบเขต model-license/territory ของผู้ใช้ที่อนุญาต |
 | 3 | โดเมนที่จะใช้ หรือ DDNS provider |
 | 4 | ใครเป็นเจ้าของบัญชี DNS/DDNS |
-| 5 | Public IP ปัจจุบัน (revalidate สดๆ ตอนนี้ ไม่ใช่ค่าเก่า) |
-| 6 | สถานะ static/dynamic/CGNAT ของ IP นั้น |
-| 7 | Router เปิด port forward 80/443 ได้จริงไหม |
+| 5 | Public IP ปัจจุบัน (revalidate สดๆ กับ `161.200.90.4` จริง ไม่ใช่จากบันทึกการจัดสรร) |
+| 6 | สถานะ static/dynamic/CGNAT ของ IP นั้น (การจัดสรรเป็นแบบ static/ตรง แต่ต้องวัดจริง ไม่ใช่สมมติเอา) |
+| 7 | border firewall ของมหาวิทยาลัยอนุญาต inbound 443/tcp, 80/tcp, และ 51820/udp มาที่ `161.200.90.4` ไหม |
 
 บันทึกการอนุมัติ (หรือ BLOCKED) ลง `evidence/public-deployment/owner-gate.md`
 
@@ -476,15 +477,15 @@ caddy validate --config deploy/caddy/Caddyfile
 
 **If it fails:** ถ้า verifier เจอ port internal เปิดอยู่ ให้หยุดทันที เป็น security boundary ที่ห้ามผ่อน
 
-### Step 26: T089 — DNS/DDNS + router forwarding
+### Step 26: T089 — DNS และยืนยัน border firewall ของมหาวิทยาลัย
 
-Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุมัติใน T085 เท่านั้น forward เฉพาะ 80/443
+สร้าง DNS A record ที่ Owner อนุมัติใน T085 ชี้ไปที่ `161.200.90.4` ยืนยันเป็นลายลักษณ์อักษรกับ IT มหาวิทยาลัยว่า border firewall อนุญาตเฉพาะ inbound 443/tcp, 80/tcp, และ 51820/udp (WireGuard) มาที่ address นั้น — ไม่มี router ให้ forward port ใน topology นี้
 
 บันทึกหลักฐานแบบ redacted (ปิดบัง IP บางส่วนตามความเหมาะสม) ใน `evidence/public-deployment/dns-router.md`
 
-**Expected result:** public DNS resolve ไปยัง Public IP ที่ revalidate แล้ว, ไม่มี CGNAT/routing blocker เหลืออยู่, และ **ไม่มี internal port forward อื่นเปิดอยู่นอกเหนือ 80/443**
+**Expected result:** public DNS resolve ไปยัง Public IP ที่ revalidate แล้ว, ไม่มี CGNAT/routing blocker เหลืออยู่, และ **ไม่มี internal port forward เลย** — WireGuard tunnel ไปหา GPU laptop คือ private point-to-point link ระหว่าง edge กับ laptop เท่านั้น ไม่ใช่ port forward และไม่เคยพาไปไกลกว่า tunnel address ของ laptop
 
-**If it fails:** ถ้าเจอ CGNAT หรือ router forward ไม่ได้ตามที่รายงานไว้ใน T085 ให้หยุดและกลับไปหา Owner ทันที ห้ามหาทางเปิด port อื่นทดแทน
+**If it fails:** ถ้าเจอ CGNAT หรือ border firewall ไม่อนุญาต 443/80/51820 จริงตามที่รายงานไว้ใน T085 ให้หยุดและกลับไปหา Owner ทันที ห้ามหาทาง port หรือ protocol อื่นทดแทน
 
 ### Step 27: T090 — TLS certificate + redirect validation
 
@@ -609,7 +610,8 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 | service ไม่ start หลัง reboot | dependency order หรือ service identity ผิด | แก้ service definition; ห้าม start ด้วยมือแล้วบอกว่าผ่าน |
 | เครื่อง LAN เข้า 8000/8188 ได้ | bind หรือ firewall rule ผิด | หยุด T083 ทันที เป็น security boundary |
 | owner-gate.md ยังมีข้อค้างไม่อนุมัติ | ยังไม่ได้ถาม Owner ครบ หรือ Owner ยังไม่ตอบ | หยุดที่ T085; ห้ามเริ่ม T086 ก่อนอนุมัติครบ |
-| Router เปิด 80/443 ไม่ได้ (ISP บล็อกหรือ CGNAT) | เครือข่ายของ operator ไม่รองรับ port forward | หยุด T089; รายงาน Owner ให้พิจารณาทางเลือกอื่น (VPN) แทนการฝืนเปิด |
+| Border firewall มหาวิทยาลัยไม่ยอมเปิด 443/80/51820 มาที่ `161.200.90.4` | นโยบาย IT ยังไม่อนุมัติ หรือคำขอชี้ไป address ผิด | หยุด T089; รายงาน Owner ห้ามใช้ `161.200.90.3` หรือพอร์ตอื่นแทนเด็ดขาด |
+| WireGuard tunnel ระหว่าง edge กับ laptop ต่อไม่ขึ้น | border firewall ยังไม่เปิด 51820/udp จริง, ลืมใส่ `PersistentKeepalive`, หรือมี VPN adapter อื่นแย่ง default route | ดู `docs/operations/tunnel-setup.md` หัวข้อ Troubleshooting — วินิจฉัยที่ชั้น tunnel เสมอ อย่าแก้โดย restart web service |
 | Certificate warning หรือ self-signed cert โผล่ | DNS ยังไม่ propagate หรือ domain ผิด | หยุด T090; ห้าม bypass warning ห้าม deploy ทั้งที่ยังมี warning |
 | Job token หรือ secret อื่นโผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T091 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
 | Internal port เข้าได้จากภายนอกใน T092 | firewall rule ยังไม่ครอบคลุมพอ | หยุดทันที; ปิด service จนกว่าจะแก้ firewall เสร็จ |
@@ -620,7 +622,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 - ถอน/ย้อนเฉพาะ component ที่ operator เพิ่งติดตั้งและมี documented rollback
 - ห้ามลบ models, evidence, database หรือ project storage เพื่อ "ลองใหม่"
 - ถ้า service ของ Phase 10 มีปัญหา ให้ stop service แล้วกลับไปรันแบบ manual เพื่อ debug ห้ามเปิด port เพิ่มเพื่อแก้
-- ถ้า Phase 11 มีปัญหาหลังเปิด public แล้ว ให้**ปิด router port forward ก่อน** แล้วค่อย debug — อย่าปล่อยให้ public เปิดอยู่ระหว่างแก้ปัญหา
+- ถ้า Phase 11 มีปัญหาหลังเปิด public แล้ว ให้**ปิด/ลบ firewall rule ของ edge ก่อน** (ที่สร้างจาก `deploy/firewall/configure-public-edge.ps1`) แล้วค่อย debug — อย่าปล่อยให้ public เปิดอยู่ระหว่างแก้ปัญหา
 - หลัง rollback ให้รัน T058 inventory ซ้ำและบันทึกความเปลี่ยนแปลง
 
 ## Escalation
@@ -634,7 +636,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 | GLB ไม่ผ่าน validation ซ้ำหลายครั้ง | Project Owner | แนบ validation output; ห้ามลดเกณฑ์เอง |
 | LAN client เข้าถึง internal port ได้ | Project Owner | รายงานทันทีเป็น security issue |
 | Security/public exposure request ก่อน Phase 10 PASS | Project Owner | ปฏิเสธและอ้าง constitution/security boundary |
-| Operator ไม่สะดวกเปิด router ของตัวเองออก public | Project Owner | แจ้งก่อนเริ่ม T085 ให้ Owner พิจารณาทางเลือกอื่น (VPN) |
+| ยังไม่ยืนยันช่องทาง management (SSH/console) ของ edge server | Project Owner / IT มหาวิทยาลัย | แจ้งก่อนรัน `configure-public-edge.ps1` — สคริปต์เช็กก่อนทำเองอยู่แล้ว แต่ต้องตัดสินใจเลือกช่องทางก่อน (Stage 0.1 ของแผน deployment) |
 | ข้อมูลใน T085 ข้อใดข้อหนึ่งตอบไม่ได้ | Project Owner | บันทึก `BLOCKED` ใน `owner-gate.md` โดยไม่แตะ public infra |
 | Job token หรือ secret อื่นรั่วระหว่าง T091 | Project Owner | รายงานทันทีเป็น security incident แล้ว invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
 | Public exposure request ที่ยังไม่ผ่าน owner-gate | Project Owner | ปฏิเสธและอ้าง Constitution ข้อ IX + T085 |
@@ -647,3 +649,4 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 | 2026-09-03 | Owner (macOS) | v1.1 — Git baseline สร้างและ push ไปยัง `R1KASAN/3D-Generate-by-AI-Local` (public) หลังผ่าน secret review; Step 0 เปลี่ยนจาก "สร้าง baseline" เป็น "clone และตรวจ baseline"; เพิ่ม Scope boundary และ ComfyUI API integration rules |
 | 2026-09-03 | Owner (macOS) | v2.0 — เปลี่ยนชื่อไฟล์จาก `windows-phase7-operator-guide.*` เป็น `windows-ai-server-runbook.*`; ขยายขอบเขตจาก Phase 7 อย่างเดียวเป็น Phase 7–10 (จบที่ LAN ใช้งานได้); เพิ่ม Hardware boundary ห้ามใช้ macOS เป็น AI server; เพิ่มหัวข้อเตรียมเข้า Phase 11 ที่ขอเพียงโดเมน/DDNS, ชนิด IP และ router 80/443 โดยยังไม่ขอตัวเลข Public IP; ยังไม่มี Windows evidence ใด ๆ |
 | 2026-09-03 | Owner (macOS) | v3.0 — แก้ความเข้าใจผิดว่า Phase 10 ต้องการเครื่อง Owner โดยตรง (จริงๆ ใช้เครื่องอื่นของ operator เองก็พอ); ขยายขอบเขตจาก Phase 7–10 เป็น Phase 7–12 เต็มตาม spec เดิม ตาม Owner ตัดสินใจให้ดำเนินการต่อจนถึง public deployment; เพิ่ม Network boundary section อธิบายว่า Phase 11 เปิด port บน router ของ operator เอง ต้องได้ความยินยอมจาก operator ด้วย ไม่ใช่แค่ Owner สั่ง; เพิ่ม Step 22–34 ครอบคลุม T085–T097 เต็มรูปแบบ (owner-approval gate, Caddy, firewall, DNS/router, TLS, external auth test, port scan, external acceptance, negative-case security test, operator runbook drill, final acceptance matrix, constitution audit); เพิ่ม verification/troubleshooting/escalation ที่เกี่ยวกับ public deployment; ยังไม่มี Windows evidence ใด ๆ |
+| 2026-09-04 | Claude (public-deployment planning) | v4.0 — แทนที่โมเดล router-ของ-operator-เอง ด้วย topology ที่อนุมัติจริง: Public IP จากมหาวิทยาลัย (`161.200.90.4`) บน edge server แยกเครื่อง เชื่อมกับ GPU laptop ผ่าน WireGuard tunnel เพื่อให้ laptop ย้ายเครือข่ายได้ เขียนใหม่ Network boundary section, รายการ owner-gate ใน Step 22, Step 26 (T089 เปลี่ยนจาก router forwarding เป็นการยืนยัน border firewall), และรายการ checklist/troubleshooting/escalation ที่เกี่ยวข้อง แก้ constitution เป็น 1.1.0 ในการเปลี่ยนแปลงเดียวกันเพื่ออนุญาตนโยบายไม่มี site-wide login อย่างชัดเจน ดูเหตุผลเต็มที่ `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md`; ยังไม่มี Windows evidence ใด ๆ |
