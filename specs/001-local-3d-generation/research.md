@@ -45,25 +45,27 @@ identifiers and protocol details out of the public API.
 private-service boundary. A backend WebSocket can be added only after evidence
 shows polling is inadequate.
 
-## 4. Two-layer access control
+## 4. Public entry and per-job access control
 
-**Decision**: Caddy shared credentials protect the whole site. Each job receives
-a separate 256-bit random capability token sent as `X-Job-Token`; only its digest
-is stored. Token comparison is constant-time. Tokens never appear in query
-strings, logs, filenames, or persisted browser storage by default.
+**Decision**: Caddy provides the HTTPS public entry point without site-wide Basic
+authentication. Job creation is public subject to the upload-validation,
+low-disk, and serial-queue controls. Each accepted job receives a separate
+256-bit random capability token sent as `X-Job-Token`; only its digest is
+stored. Token comparison is constant-time. Tokens never appear in query strings,
+logs, filenames, or persisted browser storage by default.
 
-**Rationale**: Caddy Basic authentication answers “may this person enter the
-service?” while the job token answers “may this browser access this job?”. The
-custom header avoids conflict because Basic authentication already uses the
-standard `Authorization` header. Caddy strips that Basic header before proxying
-API requests.
+**Rationale**: A public entry point removes the shared-password barrier selected
+by the owner. The job token answers “may this browser access this specific job?”
+and prevents cross-job disclosure without requiring accounts. The custom header
+keeps capability data out of browser history and URLs.
 
 **Alternatives rejected**: Application accounts add registration, recovery, and
-role scope. Query tokens leak through history and logs. A single shared password
-without job tokens cannot prevent cross-job access.
+role scope. Query tokens leak through history and logs. A site-wide shared
+password adds a login barrier without isolating one job from another.
 
-The university/network authentication exemption in the retained PDF is a
-network-connectivity fact only; it does not authenticate this application.
+The retained university/network authentication-exemption memo is scoped to a
+different project. It is not approval or current-network evidence for this
+service and does not define this application's access policy.
 
 ## 5. Hunyuan3D texture lane
 
@@ -208,7 +210,6 @@ the reproducibility authority.
 - [Three.js GLTFLoader](https://threejs.org/docs/#examples/en/loaders/GLTFLoader)
 - [Playwright](https://playwright.dev/docs/intro)
 - [Caddy automatic HTTPS](https://caddyserver.com/docs/automatic-https)
-- [Caddy basic_auth](https://caddyserver.com/docs/caddyfile/directives/basic_auth)
 - [Caddy reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy)
 - [Caddy request_body](https://caddyserver.com/docs/caddyfile/directives/request_body)
 - [SQLite WAL](https://sqlite.org/wal.html)

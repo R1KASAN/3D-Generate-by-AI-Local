@@ -33,4 +33,4 @@
 
 ## Notes
 
-- Owner decisions are recorded in `spec.md`: shared Caddy credentials plus per-job token, SQLite persistence, and JPEG/PNG up to 10 MiB with 24-hour retention and 10% free-disk admission.
+- Owner decisions are recorded in `spec.md`: no site-wide login plus per-job token protection, SQLite persistence, and JPEG/PNG up to 10 MiB with 24-hour retention and 10% free-disk admission.

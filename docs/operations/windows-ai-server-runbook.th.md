@@ -16,7 +16,7 @@
 | 8 | FastAPI คุย ComfyUI จริงได้ผ่าน adapter เดียวกับ mock | T068, T072–T074 |
 | 9 | สร้าง **textured GLB จริง** ได้ และ isolate ระหว่าง job ได้ | T075–T079 |
 | 10 | เว็บครบ flow ใช้งานได้จาก **เครื่องอื่นใน LAN** | T080–T084 |
-| 11 | เปิด HTTPS ออก public หลัง Owner อนุมัติ พร้อม auth 2 ชั้น | T085–T092 |
+| 11 | เปิด HTTPS ออก public หลัง Owner อนุมัติ พร้อมการป้องกันด้วย per-job token | T085–T092 |
 | 12 | ทดสอบจากนอกเครือข่ายจริง + audit ปิดงานทั้งโปรเจกต์ | T093–T097 |
 
 หยุดทันทีเมื่อ task ใด FAIL หรือ BLOCKED ห้ามข้าม gate เพื่อรายงานความคืบหน้า **Phase 11 มีเงื่อนไขพิเศษ**: ต้องได้ Owner approval แบบเจาะจงเป็นลายลักษณ์อักษรก่อนแตะ public infrastructure ใดๆ (ดู T085) — เป็นเงื่อนไขถาวรของ phase นี้ ไม่ใช่แค่ checklist ทั่วไป
@@ -68,7 +68,7 @@ Phase 11 จะเปิด port 80/443 ออก internet ผ่าน **router
 |---|---|---|
 | SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | เป็น reference เท่านั้น ห้ามเพิ่มเข้า MVP workflow, dependency หรือ task completion criteria |
 | Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | เป็นงาน manual หลัง MVP ไม่ใช่ส่วนของ FastAPI/ComfyUI pipeline |
-| แก้ access control จาก "shared Caddy credential + per-job token" เป็นแบบอื่น | ต้อง Owner ตัดสินใจใหม่ | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) ล็อก approved decision นี้ไว้แล้ว การเปลี่ยนคือ supersede owner decision ต้องขออนุมัติใหม่เป็นลายลักษณ์อักษร ไม่ใช่เปลี่ยนเอง |
+| แก้ access control จาก "public entry + per-job token" เป็นแบบอื่น | ต้อง Owner ตัดสินใจใหม่ | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) บันทึก approved decision นี้ไว้แล้ว การเปลี่ยนต้องขออนุมัติใหม่เป็นลายลักษณ์อักษร ห้ามเปลี่ยนเอง |
 | เปิด public ก่อนที่ T085 owner-approval gate จะผ่าน | ต้องหยุดเสมอ | ดู "Phase 11 — T085" ด้านล่าง เป็นเงื่อนไขที่ยกเว้นไม่ได้ |
 
 **เกี่ยวกับ Public IP:** ไม่ใช่ secret แต่ไม่แนะนำให้พิมพ์ตัวเลข IP ตรงๆ ลงในแชท/LINE — ให้บันทึกไว้ใน `evidence/public-deployment/dns-router.md` (redacted ตามที่ T089 กำหนด) แล้วให้ Owner เปิดดูจาก evidence file หรือ repo แทน
@@ -422,7 +422,7 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 
 > เข้า phase นี้ได้เมื่อ `evidence/lan/phase-10-gate.md` = PASS **และ** T085 (owner-approval gate) อนุมัติแล้วเท่านั้น ห้ามแตะ domain/DNS/Caddy/firewall ก่อนถึงขั้นนี้
 
-**Hard gate ที่ยกเว้นไม่ได้:** access control ที่ approve ไว้คือ **shared Caddy credential + per-job `X-Job-Token`** เท่านั้น ถ้า decision นี้หายไปหรือถูกแทนที่โดยไม่มี Owner อนุมัติใหม่ ให้หยุด phase ทันที ห้ามเปิด port 3000, 8000, 8188 หรือ 3389 ออก public ไม่ว่ากรณีใด
+**Hard gate ที่ยกเว้นไม่ได้:** access control ที่ approve ไว้คือ **public HTTPS entry โดยไม่มี site-wide login และมี per-job `X-Job-Token` สำหรับข้อมูลของแต่ละงาน** เท่านั้น ถ้า decision นี้หายไปหรือถูกแทนที่โดยไม่มี Owner อนุมัติใหม่ ให้หยุด phase ทันที ห้ามเปิด port 3000, 8000, 8188 หรือ 3389 ออก public ไม่ว่ากรณีใด
 
 ### Step 22: T085 — Owner approval gate (ทำก่อนทุกอย่างใน phase นี้)
 
@@ -430,12 +430,13 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 
 | # | ข้อมูลที่ต้องได้รับอนุมัติ |
 |---|---|
-| 1 | ขอบเขต model-license/territory ของผู้ใช้ที่อนุญาต |
-| 2 | โดเมนที่จะใช้ หรือ DDNS provider |
-| 3 | ใครเป็นเจ้าของ credential ที่จะแจก |
-| 4 | Public IP ปัจจุบัน (revalidate สดๆ ตอนนี้ ไม่ใช่ค่าเก่า) |
-| 5 | สถานะ static/dynamic/CGNAT ของ IP นั้น |
-| 6 | Router เปิด port forward 80/443 ได้จริงไหม |
+| 1 | นโยบาย public entry ที่ไม่มี site-wide login |
+| 2 | ขอบเขต model-license/territory ของผู้ใช้ที่อนุญาต |
+| 3 | โดเมนที่จะใช้ หรือ DDNS provider |
+| 4 | ใครเป็นเจ้าของบัญชี DNS/DDNS |
+| 5 | Public IP ปัจจุบัน (revalidate สดๆ ตอนนี้ ไม่ใช่ค่าเก่า) |
+| 6 | สถานะ static/dynamic/CGNAT ของ IP นั้น |
+| 7 | Router เปิด port forward 80/443 ได้จริงไหม |
 
 บันทึกการอนุมัติ (หรือ BLOCKED) ลง `evidence/public-deployment/owner-gate.md`
 
@@ -445,7 +446,7 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 
 ### Step 23: T086 — Caddy configuration contract tests
 
-เขียน `tests/security/test_caddy_contract.py` ทดสอบ HTTPS-only access, Basic auth, request-body limit, `/api` proxying, การตัด header `Authorization` แบบ Basic ออก และแบน public upstream bind
+เขียน `tests/security/test_caddy_contract.py` ทดสอบ HTTPS-only public entry ที่ไม่มี `basic_auth`, request-body limit, `/api` proxying, การส่งต่อ job token และแบน public upstream bind
 
 ```powershell
 uv run --project apps/api pytest tests/security/test_caddy_contract.py
@@ -457,15 +458,15 @@ uv run --project apps/api pytest tests/security/test_caddy_contract.py
 
 ### Step 24: T087 — Implement Caddy configuration
 
-สร้าง `deploy/caddy/Caddyfile` และ `deploy/caddy/.env.example` พร้อม hashed credential environment injection
+สร้าง `deploy/caddy/Caddyfile` และ `deploy/caddy/.env.example` สำหรับ hostname ที่อนุมัติแล้วโดยไม่มี `basic_auth`
 
 ```powershell
 caddy validate --config deploy/caddy/Caddyfile
 ```
 
-**Expected result:** `caddy validate` ผ่าน, T086 ผ่าน, HTTPS routing ที่ authenticate แล้วทำงาน, Basic-header ถูกตัดออกจริง และ **ไม่มี credential ถูก commit**
+**Expected result:** `caddy validate` ผ่าน, T086 ผ่าน, public HTTPS routing และการส่งต่อ job token ทำงาน และ **ไม่มี secret ถูก commit**
 
-**If it fails:** ห้าม commit Caddyfile ที่มี credential ฝังอยู่ แก้ให้ใช้ environment variable เท่านั้น แล้ว scan ซ้ำก่อน commit
+**If it fails:** ห้ามฝัง token หรือ secret อื่นใน Caddyfile ถ้าจำเป็นต้องใช้ secret ให้ใช้ environment variable แล้ว scan ซ้ำก่อน commit
 
 ### Step 25: T088 — Windows Firewall boundary
 
@@ -497,7 +498,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 
 รัน `scripts/verify/test_public_auth.py` จากเครื่องนอกเครือข่าย
 
-**Expected result:** `evidence/public-deployment/auth.md` แสดงว่า request ที่ไม่ authenticate ถูกปฏิเสธก่อนสร้าง job จริง, request ที่ authenticate แล้วทำงานได้, token ผิด job คืน 404 แบบเดียวกันทุกกรณี (ไม่บอกใบ้ว่า job มีจริงไหม) และ **ไม่มี credential/token หลุดใน URL หรือ log ที่ capture ไว้**
+**Expected result:** `evidence/public-deployment/auth.md` แสดงว่าเข้า HTTPS และส่งงานที่ถูกต้องได้โดยไม่มี site-wide login, token ที่ไม่มีหรือผิด job คืน 404 แบบเดียวกันสำหรับข้อมูลของ job (ไม่บอกใบ้ว่า job มีจริงไหม) และ **ไม่มี token หลุดใน URL หรือ log ที่ capture ไว้**
 
 **If it fails:** ถ้า token หลุดใน log หรือ URL ให้หยุดทันที เป็นข้อมูลอ่อนไหวที่รั่วออกไปแล้ว
 
@@ -509,7 +510,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 
 **If it fails:** ถ้า internal port ใดเชื่อมได้จากภายนอก ให้หยุดและปิดทันที ก่อนดำเนินการต่อ
 
-**Phase 11 exit criteria:** T085 owner gate อนุมัติแล้ว, TLS และ access control สองชั้นผ่านครบ, มีแค่ทางเข้า public ที่ตั้งใจเท่านั้นที่เข้าถึงได้ และไม่มี secret ถูก commit
+**Phase 11 exit criteria:** T085 owner gate อนุมัติแล้ว, TLS และ per-job access control ผ่านครบ, มีแค่ทางเข้า public ที่ตั้งใจเท่านั้นที่เข้าถึงได้ และไม่มี secret ถูก commit
 
 ---
 
@@ -521,13 +522,13 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 
 สร้างและรัน checklist ที่ `docs/operations/external-acceptance.md`
 
-**Expected result:** `evidence/public-deployment/full-flow.md` บันทึกว่า authorized user upload ได้จริง, เห็น queue/process state จริง, preview textured GLB ได้ครบ (rotate/zoom/pan/reset), และ download ได้ไฟล์ byte-identical ผ่าน HTTPS จริงจากนอกเครือข่าย
+**Expected result:** `evidence/public-deployment/full-flow.md` บันทึกว่า public submission ได้จริง, เห็น queue/process state จริง, preview textured GLB ได้ครบ (rotate/zoom/pan/reset), และ download ได้ไฟล์ byte-identical ด้วย job token ที่ระบบคืนให้ ผ่าน HTTPS จริงจากนอกเครือข่าย
 
 **If it fails:** บันทึกจุดที่ flow ขาดและหยุด ห้ามใช้ผลจาก LAN แทน external evidence
 
 ### Step 31: T094 — External-network security checklist
 
-สร้าง `docs/operations/external-network-security-checklist.md` และรัน `scripts/verify/test_external_acceptance.py` ครอบคลุม unauthorized, wrong-token, expired-job, invalid upload, low-disk admission และ internal-port cases
+สร้าง `docs/operations/external-network-security-checklist.md` และรัน `scripts/verify/test_external_acceptance.py` ครอบคลุม public entry, missing/wrong-token, expired-job, invalid upload, low-disk admission และ internal-port cases
 
 **Expected result:** `evidence/public-deployment/negative-cases.md` แสดง response ที่ปลอดภัยทุกกรณีและ **zero information leakage**
 
@@ -583,7 +584,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 - [ ] `evidence/public-deployment/firewall.md` ยืนยัน 3000/8000/8188/3389 blocked จากภายนอก
 - [ ] `evidence/public-deployment/dns-router.md` ยืนยัน DNS ชี้ IP ที่ revalidate แล้ว ไม่มี CGNAT blocker
 - [ ] `evidence/public-deployment/tls.md` ยืนยัน HTTPS ผ่านไม่มี certificate warning
-- [ ] `evidence/public-deployment/auth.md` ยืนยันไม่มี credential/token หลุดใน log
+- [ ] `evidence/public-deployment/auth.md` ยืนยันไม่มี job token หรือ secret อื่นหลุดใน log
 - [ ] `evidence/public-deployment/ports.md` ยืนยัน internal port ทั้งหมดเชื่อมไม่ได้จากภายนอก
 - [ ] `evidence/public-deployment/full-flow.md` มี external user flow ที่ผ่านจริงผ่าน HTTPS
 - [ ] `evidence/public-deployment/negative-cases.md` ยืนยัน zero information leakage
@@ -610,7 +611,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 | owner-gate.md ยังมีข้อค้างไม่อนุมัติ | ยังไม่ได้ถาม Owner ครบ หรือ Owner ยังไม่ตอบ | หยุดที่ T085; ห้ามเริ่ม T086 ก่อนอนุมัติครบ |
 | Router เปิด 80/443 ไม่ได้ (ISP บล็อกหรือ CGNAT) | เครือข่ายของ operator ไม่รองรับ port forward | หยุด T089; รายงาน Owner ให้พิจารณาทางเลือกอื่น (VPN) แทนการฝืนเปิด |
 | Certificate warning หรือ self-signed cert โผล่ | DNS ยังไม่ propagate หรือ domain ผิด | หยุด T090; ห้าม bypass warning ห้าม deploy ทั้งที่ยังมี warning |
-| Credential/token โผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T091 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง rotate credential |
+| Job token หรือ secret อื่นโผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T091 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
 | Internal port เข้าได้จากภายนอกใน T092 | firewall rule ยังไม่ครอบคลุมพอ | หยุดทันที; ปิด service จนกว่าจะแก้ firewall เสร็จ |
 
 ## Rollback
@@ -635,7 +636,7 @@ Apply เฉพาะ DNS/DDNS และ port forward ที่ Owner อนุ�
 | Security/public exposure request ก่อน Phase 10 PASS | Project Owner | ปฏิเสธและอ้าง constitution/security boundary |
 | Operator ไม่สะดวกเปิด router ของตัวเองออก public | Project Owner | แจ้งก่อนเริ่ม T085 ให้ Owner พิจารณาทางเลือกอื่น (VPN) |
 | ข้อมูลใน T085 ข้อใดข้อหนึ่งตอบไม่ได้ | Project Owner | บันทึก `BLOCKED` ใน `owner-gate.md` โดยไม่แตะ public infra |
-| Credential/token รั่วระหว่าง T091 | Project Owner | รายงานทันทีเป็น security incident ขอ rotate credential |
+| Job token หรือ secret อื่นรั่วระหว่าง T091 | Project Owner | รายงานทันทีเป็น security incident แล้ว invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
 | Public exposure request ที่ยังไม่ผ่าน owner-gate | Project Owner | ปฏิเสธและอ้าง Constitution ข้อ IX + T085 |
 
 ## History

@@ -12,8 +12,8 @@ a time to a pinned ComfyUI/Hunyuan3D shape-and-texture workflow, validates and
 atomically publishes the textured GLB, then lets the submitting browser poll,
 preview, and download it. macOS development uses the same FastAPI job contract
 with a deterministic mock adapter and a known-good textured GLB. Caddy is the
-only public listener and applies shared credentials before FastAPI verifies the
-per-job capability token.
+only public listener, provides HTTPS, and passes job-resource requests to
+FastAPI for per-job capability-token verification.
 
 ## Technical Context
 
@@ -88,7 +88,7 @@ live Windows/network gates pass.
 
 ```text
 Browser
-  -> Caddy shared credentials + HTTPS
+  -> Caddy HTTPS (no site-wide login)
   -> Next.js :3000
   -> FastAPI /api/v1 :8000 (X-Job-Token for job resources)
   -> SQLite durable job/queue state + isolated local storage
@@ -98,7 +98,7 @@ Browser
        -> ComfyUI 127.0.0.1:8188 on Windows
   -> validate textured GLB
   -> atomic publish
-  -> authenticated fetch -> browser object URL -> R3F preview/download
+  -> job-token-authorized fetch -> browser object URL -> R3F preview/download
 ```
 
 The frontend polls persisted FastAPI state; it never connects to ComfyUI. The
@@ -107,15 +107,14 @@ restart reconciliation always use `/queue` and `/history/{prompt_id}`.
 
 ### Access-Control Contract
 
-1. Caddy `basic_auth` protects every public page and `/api/v1` route.
-2. Caddy removes the inbound Basic `Authorization` header before proxying API
-   requests so the shared secret never reaches application logs.
-3. FastAPI returns one 256-bit random job token once at creation and stores only
+1. Caddy exposes the public page and `/api/v1` over HTTPS without site-wide
+   Basic authentication, while Next.js, FastAPI, and ComfyUI remain private.
+2. FastAPI returns one 256-bit random job token once at creation and stores only
    its digest.
-4. The browser sends that token in `X-Job-Token` for status, model, and download.
+3. The browser sends that token in `X-Job-Token` for status, model, and download.
    It MUST NOT use a query parameter. A bootstrap URL fragment may be consumed
    client-side and removed immediately with `history.replaceState`.
-5. Missing, invalid, expired, or wrong-job tokens receive the same not-found
+4. Missing, invalid, expired, or wrong-job tokens receive the same not-found
    response as an unknown job so job existence is not disclosed.
 
 ## Project Structure

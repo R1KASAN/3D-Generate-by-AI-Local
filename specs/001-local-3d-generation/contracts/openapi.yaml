@@ -3,7 +3,7 @@ info:
   title: Local 3D Generation MVP API
   version: 0.1.0
   description: >-
-    Public application contract behind Caddy shared authentication. ComfyUI
+    Public HTTPS application contract. ComfyUI
     identifiers and routes are never exposed by this API.
 servers:
   - url: /api/v1

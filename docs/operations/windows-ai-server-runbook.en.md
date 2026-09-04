@@ -16,7 +16,7 @@ Take the Windows NVIDIA server from "bare machine" to "AI server genuinely usabl
 | 8 | FastAPI talks to real ComfyUI through the same adapter contract as the mock | T068, T072–T074 |
 | 9 | A **real textured GLB** is produced and jobs stay isolated | T075–T079 |
 | 10 | The full web flow works from a **second device on the LAN** | T080–T084 |
-| 11 | HTTPS opens to the public after Owner approval, with two-layer auth | T085–T092 |
+| 11 | HTTPS opens to the public after Owner approval, with per-job token protection | T085–T092 |
 | 12 | External-network testing plus the final project-closing audit | T093–T097 |
 
 Stop immediately when any task is FAIL or BLOCKED. Never skip a gate merely to report progress. **Phase 11 carries a special condition**: it requires explicit, written Owner approval before touching any public infrastructure (see T085) — this is a standing condition of the phase, not an ordinary checklist item.
@@ -68,7 +68,7 @@ When an external video or README conflicts with these artifacts, the project art
 |---|---|---|
 | SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | Reference only. Never add to the MVP workflow, dependencies, or task completion criteria. |
 | Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | Manual post-MVP work, not part of the FastAPI/ComfyUI pipeline. |
-| Changing access control away from "shared Caddy credential + per-job token" | Requires a fresh Owner decision | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) locks in this approved decision. Changing it supersedes an owner decision and needs written re-approval — never change it unilaterally. |
+| Changing access control away from "public entry + per-job token" | Requires a fresh Owner decision | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) records this approved decision. Changing it needs written re-approval — never change it unilaterally. |
 | Opening anything to the public before the T085 owner-approval gate passes | Always stop | See "Phase 11 — T085" below. This condition has no exceptions. |
 
 **About the Public IP:** it is not a secret, but avoid typing the raw number into chat/LINE — record it in `evidence/public-deployment/dns-router.md` (redacted as T089 requires) and let the Owner view it from the evidence file or the repo instead.
@@ -422,7 +422,7 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 
 > Enter this phase only when `evidence/lan/phase-10-gate.md` = PASS **and** T085 (the owner-approval gate) has been approved. Never touch domain/DNS/Caddy/firewall before that.
 
-**Hard gate with no exceptions:** the approved access control is **shared Caddy credentials plus a per-job `X-Job-Token`**, nothing else. If that decision is missing or gets replaced without fresh written Owner approval, stop the phase immediately. Never expose ports 3000, 8000, 8188, or 3389 publicly under any circumstance.
+**Hard gate with no exceptions:** the approved access control is a **public HTTPS entry point without a site-wide login plus a per-job `X-Job-Token` for job resources**. If that decision is missing or gets replaced without fresh written Owner approval, stop the phase immediately. Never expose ports 3000, 8000, 8188, or 3389 publicly under any circumstance.
 
 ### Step 22: T085 — Owner approval gate (do this before anything else in this phase)
 
@@ -430,12 +430,13 @@ Send the Owner the following and **wait for written approval** before touching a
 
 | # | Decision needing approval |
 |---|---|
-| 1 | The model-license/territory scope of permitted users |
-| 2 | Which domain or DDNS provider will be used |
-| 3 | Who owns the credentials that will be issued |
-| 4 | The current Public IP (revalidated fresh right now, not an old value) |
-| 5 | Whether that IP is static, dynamic, or behind CGNAT |
-| 6 | Whether the router can actually forward ports 80/443 |
+| 1 | The public-entry/no-site-wide-login policy |
+| 2 | The model-license/territory scope of permitted users |
+| 3 | Which domain or DDNS provider will be used |
+| 4 | Who controls the DNS/DDNS account |
+| 5 | The current Public IP (revalidated fresh right now, not an old value) |
+| 6 | Whether that IP is static, dynamic, or behind CGNAT |
+| 7 | Whether the router can actually forward ports 80/443 |
 
 Record the approval (or BLOCKED) in `evidence/public-deployment/owner-gate.md`.
 
@@ -445,7 +446,7 @@ Record the approval (or BLOCKED) in `evidence/public-deployment/owner-gate.md`.
 
 ### Step 23: T086 — Caddy configuration contract tests
 
-Write `tests/security/test_caddy_contract.py` testing HTTPS-only access, Basic auth, request-body limit, `/api` proxying, stripping the Basic `Authorization` header, and banning public upstream binds.
+Write `tests/security/test_caddy_contract.py` testing HTTPS-only public entry without `basic_auth`, request-body limit, `/api` proxying, job-token forwarding, and banning public upstream binds.
 
 ```powershell
 uv run --project apps/api pytest tests/security/test_caddy_contract.py
@@ -457,15 +458,15 @@ uv run --project apps/api pytest tests/security/test_caddy_contract.py
 
 ### Step 24: T087 — Implement the Caddy configuration
 
-Create `deploy/caddy/Caddyfile` and `deploy/caddy/.env.example` with hashed credential environment injection.
+Create `deploy/caddy/Caddyfile` and `deploy/caddy/.env.example` for the approved hostname without `basic_auth`.
 
 ```powershell
 caddy validate --config deploy/caddy/Caddyfile
 ```
 
-**Expected result:** `caddy validate` passes, T086 passes, authenticated HTTPS routing works, the Basic header is actually stripped, and **no credential is committed**.
+**Expected result:** `caddy validate` passes, T086 passes, public HTTPS routing and job-token forwarding work, and **no secret is committed**.
 
-**If it fails:** never commit a Caddyfile with an embedded credential. Fix it to use environment variables only, then scan again before committing.
+**If it fails:** never embed a token or other secret in the Caddyfile. Use environment variables only where a secret is genuinely required, then scan again before committing.
 
 ### Step 25: T088 — Windows Firewall boundary
 
@@ -497,7 +498,7 @@ Run `scripts/verify/test_https_boundary.py`.
 
 Run `scripts/verify/test_public_auth.py` from a machine outside the network.
 
-**Expected result:** `evidence/public-deployment/auth.md` shows unauthenticated requests refused before any job is created, authenticated requests working, wrong-job tokens returning a uniform 404 (no hint whether the job exists), and **no credential or token leaking into any captured URL or log**.
+**Expected result:** `evidence/public-deployment/auth.md` shows the HTTPS entry point and valid submissions work without a site-wide login, missing or wrong-job tokens return a uniform 404 for job resources (no hint whether the job exists), and **no token leaks into any captured URL or log**.
 
 **If it fails:** if a token leaks into a log or URL, stop immediately — that is sensitive data already exposed.
 
@@ -509,7 +510,7 @@ Run `scripts/verify/test_external_ports.py` from outside the network.
 
 **If it fails:** if any internal port is reachable from outside, stop and close it before proceeding further.
 
-**Phase 11 exit criteria:** the T085 owner gate is approved, TLS and two-layer access control both pass, only the intended public entry point is reachable, and no secret has been committed.
+**Phase 11 exit criteria:** the T085 owner gate is approved, TLS and per-job access control both pass, only the intended public entry point is reachable, and no secret has been committed.
 
 ---
 
@@ -521,13 +522,13 @@ Run `scripts/verify/test_external_ports.py` from outside the network.
 
 Create and execute the checklist at `docs/operations/external-acceptance.md`.
 
-**Expected result:** `evidence/public-deployment/full-flow.md` records a real authorized upload, real queue/process state, a complete textured-GLB preview (rotate/zoom/pan/reset), and a byte-identical download — all over real HTTPS from outside the network.
+**Expected result:** `evidence/public-deployment/full-flow.md` records a real public submission, real queue/process state, a complete textured-GLB preview (rotate/zoom/pan/reset), and a byte-identical download using the returned job token — all over real HTTPS from outside the network.
 
 **If it fails:** record exactly where the flow broke and stop. LAN evidence is never a substitute for external evidence.
 
 ### Step 31: T094 — External-network security checklist
 
-Create `docs/operations/external-network-security-checklist.md` and run `scripts/verify/test_external_acceptance.py` covering unauthorized, wrong-token, expired-job, invalid upload, low-disk admission, and internal-port cases.
+Create `docs/operations/external-network-security-checklist.md` and run `scripts/verify/test_external_acceptance.py` covering public entry, missing/wrong-token, expired-job, invalid upload, low-disk admission, and internal-port cases.
 
 **Expected result:** `evidence/public-deployment/negative-cases.md` shows a safe response for every case and **zero information leakage**.
 
@@ -583,7 +584,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 - [ ] `evidence/public-deployment/firewall.md` confirms 3000/8000/8188/3389 are blocked from outside.
 - [ ] `evidence/public-deployment/dns-router.md` confirms DNS points to a revalidated IP with no CGNAT blocker.
 - [ ] `evidence/public-deployment/tls.md` confirms HTTPS passes with no certificate warnings.
-- [ ] `evidence/public-deployment/auth.md` confirms no credential/token leaked into a log.
+- [ ] `evidence/public-deployment/auth.md` confirms no job token or other secret leaked into a log.
 - [ ] `evidence/public-deployment/ports.md` confirms every internal port is unreachable from outside.
 - [ ] `evidence/public-deployment/full-flow.md` contains a real external-user flow that passed over HTTPS.
 - [ ] `evidence/public-deployment/negative-cases.md` confirms zero information leakage.
@@ -611,7 +612,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | `owner-gate.md` still has unapproved items | Not all questions asked, or the Owner hasn't answered yet | Stop at T085; never start T086 before every item is approved |
 | Router can't forward 80/443 (ISP block or CGNAT) | The operator's network doesn't support port forwarding | Stop at T089; report to the Owner to consider an alternative (VPN) instead of forcing it open |
 | A certificate warning or self-signed cert appears | DNS hasn't propagated yet, or the domain is wrong | Stop at T090; never bypass the warning, never deploy while a warning exists |
-| A credential/token appears in a captured log | Logging isn't masking sensitive values | Stop at T091 immediately — treat this as a leak and rotate the credential |
+| A job token or other secret appears in a captured log | Logging isn't masking sensitive values | Stop at T091 immediately — treat this as a leak and invalidate the affected token or rotate the affected secret |
 | An internal port is reachable from outside during T092 | Firewall rules don't cover it fully | Stop immediately; take the service down until the firewall is fixed |
 
 ## Rollback
@@ -636,7 +637,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | A public-exposure request arrives before Phase 10 PASS | Project Owner | Refuse and cite the constitution/security boundary |
 | The operator isn't comfortable opening their own router to the public | Project Owner | Say so before starting T085 so the Owner can consider an alternative (VPN) |
 | Any T085 item cannot be answered | Project Owner | Record `BLOCKED` in `owner-gate.md` without touching public infrastructure |
-| A credential/token leaks during T091 | Project Owner | Report immediately as a security incident and request credential rotation |
+| A job token or other secret leaks during T091 | Project Owner | Report immediately as a security incident and invalidate the affected token or rotate the affected secret |
 | A public-exposure request arrives before the owner gate passes | Project Owner | Refuse and cite Constitution principle IX plus T085 |
 
 ## History

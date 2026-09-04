@@ -92,16 +92,18 @@ Do not mark the textured-GLB gate complete from a shape-only result.
 Do not begin until Windows textured GLB, full LAN flow, Caddy/firewall, minimum
 access control, service/reboot, and license/territory review gates pass.
 
-1. Owner locks the domain/DDNS name and permitted authorized-user territory.
-2. Reverify the owner-declared current Public IP from the retained project
-   reference, whether it is static/dynamic, whether CGNAT applies, and whether the
-   router can forward 80/443. Do not commit the IP to source.
-3. Configure Caddy shared credentials using a password hash, never plaintext.
+1. Owner locks the domain/DDNS name and permitted hosted-service territory.
+2. Reverify the current Public IP independently, whether it is static/dynamic,
+   whether CGNAT applies, and whether the router can forward 80/443. Do not use
+   the retained authentication-exemption memo as current evidence or commit the
+   IP to source.
+3. Configure Caddy for the approved hostname and HTTPS without site-wide Basic
+   authentication.
 4. Bind Next.js, FastAPI, and ComfyUI to loopback.
 5. Allow public inbound 443; allow 80 only for redirect/certificate issuance.
 6. Validate Caddy configuration before restart.
-7. Test from an external network: HTTPS certificate, shared login, upload,
-   progress, preview, download, wrong-job token, and expiry.
+7. Test from an external network: HTTPS certificate, public entry and upload,
+   job-token-protected progress/preview/download, wrong-job token, and expiry.
 8. Scan externally and record that 3000, 8000, 8188, and 3389 are unreachable.
 
 ## Evidence record template

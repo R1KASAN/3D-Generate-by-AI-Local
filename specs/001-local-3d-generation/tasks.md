@@ -75,7 +75,7 @@ and health/errors leak no internal detail.
 
 ## Phase 3: User Story 1 — macOS Mock Upload, Preview, and Download (P1) 🎯
 
-**Goal**: A local authorized evaluator uploads one valid image, receives an opaque
+**Goal**: A local evaluator uploads one valid image, receives an opaque
 Job ID/token, reaches completion through the mock adapter, previews the textured
 GLB with all controls, and downloads the same bytes.
 
@@ -261,29 +261,30 @@ service/reboot recovery passes, and ComfyUI/backend are not directly reachable.
 
 ## Phase 11: User Story 4 — Protected Caddy HTTPS Deployment (P4)
 
-**Hard gate**: The approved access control is shared Caddy credentials plus
-per-job `X-Job-Token`. Stop this phase if that decision is absent or superseded.
-Do not expose ports 3000, 8000, 8188, or 3389.
+**Hard gate**: The approved access control is a public HTTPS entry point with no
+site-wide username/password plus per-job `X-Job-Token` protection for job
+resources. Stop this phase if that decision is absent or superseded. Do not
+expose ports 3000, 8000, 8188, or 3389.
 
-**Independent test**: An authorized external user completes the core flow through
-HTTPS; unauthenticated access is rejected; external probes reach only approved
-80/443 behavior.
+**Independent test**: An external user completes the core flow through HTTPS
+without a site-wide login; missing or wrong job tokens cannot read job resources;
+external probes reach only approved 80/443 behavior.
 
 ### Tests first
 
-- [ ] T085 [US4] Record owner approval for model-license/territory scope, domain or DDNS, credential owner, current Public-IP revalidation, static/dynamic and CGNAT status, and router 80/443 capability in `evidence/public-deployment/owner-gate.md`; complete only when every decision is explicitly approved or the phase is marked BLOCKED without changing public infrastructure. **Requires owner approval or owner-provided access.**
-- [ ] T086 [P] [US4] Write Caddy configuration contract tests for HTTPS-only application access, Basic auth, request-body limit, `/api` proxying, Basic `Authorization` stripping, and forbidden public upstream binds in `tests/security/test_caddy_contract.py`; complete when `uv run --project apps/api pytest tests/security/test_caddy_contract.py` fails against the missing Caddy configuration and includes assertions banning public 3000/8000/8188/3389. **Requires owner approval or owner-provided access.**
+- [X] T085 [US4] Record owner approval for the public-entry/no-site-wide-login policy, model-license/territory scope, domain or DDNS, DNS/DDNS account owner, current Public-IP revalidation, static/dynamic and CGNAT status, and router 80/443 capability in `evidence/public-deployment/owner-gate.md`; complete only when every decision is explicitly approved or the phase is marked BLOCKED without changing public infrastructure. **Requires owner approval or owner-provided access.**
+- [ ] T086 [P] [US4] Write Caddy configuration contract tests for HTTPS-only public entry without `basic_auth`, request-body limit, `/api` proxying, job-token forwarding, and forbidden public upstream binds in `tests/security/test_caddy_contract.py`; complete when `uv run --project apps/api pytest tests/security/test_caddy_contract.py` fails against the missing Caddy configuration and includes assertions banning public 3000/8000/8188/3389. **Requires owner approval or owner-provided access.**
 
 ### Deployment and verification
 
-- [ ] T087 [US4] Implement the Caddy configuration with hashed credential environment injection in `deploy/caddy/Caddyfile` and `deploy/caddy/.env.example`; complete only when `caddy validate --config deploy/caddy/Caddyfile`, T086, authenticated HTTPS routing, and Basic-header stripping tests pass without committing credentials. **Requires owner approval or owner-provided access.**
+- [ ] T087 [US4] Implement the Caddy configuration for the approved hostname without `basic_auth` in `deploy/caddy/Caddyfile` and `deploy/caddy/.env.example`; complete only when `caddy validate --config deploy/caddy/Caddyfile`, T086, public HTTPS routing, and job-token forwarding tests pass without committing secrets. **Requires owner approval or owner-provided access.**
 - [ ] T088 [US4] Implement least-privilege Windows Defender Firewall rules in `deploy/firewall/configure-public-boundary.ps1` and a read-only verifier in `deploy/firewall/verify-public-boundary.ps1`; complete only when the verifier records 443 allowed, optional 80 limited to redirect/certificate, and 3000/8000/8188/3389 blocked in `evidence/public-deployment/firewall.md`. **Requires Windows NVIDIA server evidence. Requires owner approval or owner-provided access.**
 - [ ] T089 [US4] Apply owner-approved DNS/DDNS and router forwarding only for 80/443 and record redacted before/after evidence in `evidence/public-deployment/dns-router.md`; complete only when public DNS resolves to the revalidated current Public IP, no CGNAT/routing blocker remains, and no internal port forward exists. **Requires owner approval or owner-provided access.**
 - [ ] T090 [US4] Obtain and validate the public certificate and redirect behavior with `scripts/verify/test_https_boundary.py`; complete only when `evidence/public-deployment/tls.md` records trusted hostname validation, HTTPS 443 success, HTTP 80 redirect/certificate-only behavior, and no certificate warnings. **Requires owner approval or owner-provided access.**
-- [ ] T091 [US4] Execute shared-credential and per-job-token boundary tests from an external client using `scripts/verify/test_public_auth.py`; complete only when unauthenticated requests are refused before job creation, authorized requests work, wrong-job tokens return uniform 404, and no credential/token appears in captured URLs or logs in `evidence/public-deployment/auth.md`. **Requires owner approval or owner-provided access.**
+- [ ] T091 [US4] Execute public-entry and per-job-token boundary tests from an external client using `scripts/verify/test_public_auth.py`; complete only when HTTPS access and valid submission work without a site-wide login, missing/wrong-job tokens return uniform 404 for job resources, and no token appears in captured URLs or logs in `evidence/public-deployment/auth.md`. **Requires owner approval or owner-provided access.**
 - [ ] T092 [US4] Execute an external TCP/service scan using `scripts/verify/test_external_ports.py`; complete only when `evidence/public-deployment/ports.md` shows expected 443, optional 80 behavior, and failed connections to 3000, 8000, 8188, and 3389. **Requires owner approval or owner-provided access.**
 
-**Phase 11 exit criteria**: Owner gate is approved; TLS and two-layer access
+**Phase 11 exit criteria**: Owner gate is approved; TLS and per-job access
 control pass; only the intended public entry is reachable; no secret is committed.
 
 ---
@@ -292,8 +293,8 @@ control pass; only the intended public entry is reachable; no secret is committe
 
 **Purpose**: Close the Definition of Done with real user and operator evidence.
 
-- [ ] T093 [US4] Execute the external-network full-flow acceptance checklist in `docs/operations/external-acceptance.md`; complete only when `evidence/public-deployment/full-flow.md` records an authorized upload, real queue/process state, textured preview with rotate/zoom/pan/reset, and byte-identical GLB download through HTTPS. **Requires Windows NVIDIA server evidence. Requires owner approval or owner-provided access.**
-- [ ] T094 [US4] Create and execute the external-network security checklist in `docs/operations/external-network-security-checklist.md` using `scripts/verify/test_external_acceptance.py` for unauthorized, wrong-token, expired-job, invalid upload, low-disk admission, and internal-port cases; complete only when `evidence/public-deployment/negative-cases.md` records safe expected responses and zero information leakage. **Requires owner approval or owner-provided access.**
+- [ ] T093 [US4] Execute the external-network full-flow acceptance checklist in `docs/operations/external-acceptance.md`; complete only when `evidence/public-deployment/full-flow.md` records a public submission, real queue/process state, textured preview with rotate/zoom/pan/reset, and byte-identical GLB download through HTTPS using the returned job token. **Requires Windows NVIDIA server evidence. Requires owner approval or owner-provided access.**
+- [ ] T094 [US4] Create and execute the external-network security checklist in `docs/operations/external-network-security-checklist.md` using `scripts/verify/test_external_acceptance.py` for public entry, missing/wrong-token, expired-job, invalid upload, low-disk admission, and internal-port cases; complete only when `evidence/public-deployment/negative-cases.md` records safe expected responses and zero information leakage. **Requires owner approval or owner-provided access.**
 - [ ] T095 [US2] Create and exercise the operator health/recovery/cleanup runbook in `docs/operations/operator-runbook.md`; complete only when `evidence/operations/runbook-drill.md` traces Job IDs across submission, queue, processing, result, download, failure, restart, 24-hour expiry, and low-disk recovery without exposing user content or secrets. **Requires Windows NVIDIA server evidence.**
 - [ ] T096 [US4] Produce the final criterion-to-evidence acceptance matrix in `evidence/final/mvp-acceptance.md`; complete only when every SC-001–SC-007 and FR-001–FR-018 maps to current passing automated/manual evidence, all unresolved items are marked BLOCKED, and no checkbox/report alone is treated as proof. **Requires owner approval or owner-provided access.**
 - [ ] T097 Run the final constitution and scope audit against `.specify/memory/constitution.md` and record it in `evidence/final/constitution-audit.md`; complete only when no Post-MVP component was added, all exceptions contain reason/risk/owner/review trigger, internal ports remain private, and the verdict is PASS or honestly BLOCKED.
