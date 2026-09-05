@@ -38,6 +38,8 @@ def test_write_evidence_masks_context_checks_and_footnote(tmp_path: Path):
     "reboot-matrix.md", "interruption-recovery.md", "public-route-disable.md",
     "provider-limits.md", "fallback-policy.md", "egress-identity.md",
     "external-journey.md", "outbound-implementation.md",
+    "wireguard-transport-boundary.md", "wireguard-transport-boundary-live.md",
+    "transport-reachability.md", "mobility.md",
 ])
 def test_phase_four_to_six_evidence_masks_every_field(tmp_path, filename):
     path = tmp_path / filename
