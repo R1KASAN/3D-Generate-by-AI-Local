@@ -16,6 +16,59 @@ Revises feature 002's compute-link contract. The addressing, scope, and persiste
 | Origin peer config | **no `Endpoint` line** | The origin learns the laptop's current address from each handshake — this is what makes relocation work |
 | Tunnel addresses | origin `10.10.0.1`, laptop `10.10.0.2` | Stable regardless of physical location |
 
+## C1a — Transport-listener clarification (2026-09-06)
+
+This contract selects **Option A** for the meaning of “no inbound.” The origin may listen on the WireGuard UDP transport port because the laptop is the outbound initiator and the origin is the responder. That listener is a private-link transport endpoint, not a public application or management entry point.
+
+The origin firewall MUST allow only the approved origin address, the WireGuard UDP port, and the WireGuard transport/service. WireGuard peer public-key authentication is the peer admission control; the remote source cannot be narrowed to a fixed CIDR because the laptop changes networks. No TCP application port, management port, router port forward, or catch-all rule may be added for this link. The WireGuard peer configuration MUST continue to permit only `10.10.0.2/32` on the origin and `10.10.0.1/32` on the laptop. Packets accepted by the transport MUST be routable only to the laptop-side job-service binding; Feature 001, ComfyUI, administration, storage, metrics, and the origin pass-through remain unreachable directly from the Internet.
+
+The origin's transport listener being reachable at the approved address does not contradict the outbound public-entry requirement: public application traffic still arrives through the provider edge and outbound connector, while the transport listener carries only the authenticated origin-to-laptop binding.
+
+### C1a-1 — The boundary is feature-003 work, and it is verifiable (SC-018)
+
+Feature 002's origin inbound surface was its hardened `:443` listener; the WireGuard posture rode along behind it and was never independently tested. Option A deletes that listener, which makes this UDP port the origin's **only** Internet-reachable socket. It is therefore specified, verified, and evidenced here rather than inherited.
+
+| # | Rule | Must be true |
+|---|---|---|
+| 1 | Bound address | The approved origin address only |
+| 2 | Port | Exactly one, explicitly named WireGuard UDP port |
+| 3 | Service | The WireGuard transport/service only |
+| 4 | Peer admission | Registered WireGuard peer public key; the remote source address cannot be pinned because the laptop moves (C1b) |
+| 5 | Tunnel scope | `10.10.0.2/32` on the origin, `10.10.0.1/32` on the laptop — see C2 |
+| 6 | TCP application listener | **None** |
+| 7 | SSH / RDP / VNC / other management listener | **None** |
+| 8 | Catch-all inbound rule | **None** |
+| 9 | Router port forwarding | **None** |
+| 10 | Direct GPU-laptop Internet exposure | **None** — see C7 |
+
+**Verification obligations.** A static verifier reads the declared boundary and reports each rule above. It must **fail closed** on any rule it cannot evaluate rather than reporting a pass by omission. A negative test is mandatory: fixtures that add an unrelated inbound listener, widen the peer scope beyond `/32`, add a catch-all rule, or introduce a router port forward must all be **rejected**. Without it a verifier that merely confirms the expected rules exist would also pass a configuration that has those rules *plus* a violation. Live origin-local evidence that the running configuration matches this declaration is separate and remains blocked until authorized origin access exists.
+
+## C1b — Mobility is a contract obligation (FR-040, SC-017)
+
+The laptop is expected to change networks — university Wi-Fi, home network, mobile hotspot — and to re-establish this link on its own. That mobility is the reason the origin is the responder and the reason C1 forbids an `Endpoint` line on the origin peer: the laptop's current address is learned from each handshake instead of being configured.
+
+| Must NOT change when the laptop moves | Why |
+|---|---|
+| Public DNS record | The record points at the provider edge, never at either machine (FR-005, FR-011b) |
+| Public hostname | Naming continuity (FR-011) |
+| Provider tunnel route | The route targets the tunnel, not a network location |
+| Approved-origin configuration | The origin never learns where the laptop is from configuration |
+| Feature 001 application configuration | The application is loopback-bound and location-independent (C4) |
+| WireGuard tunnel addressing | `10.10.0.1` / `10.10.0.2` are stable by design (C1) |
+
+Editing any of those six to restore connectivity after a move is a **failure** of FR-040, not a workaround for it. Acceptance requires at least two distinct external networks (SC-017).
+
+## C1c — Option A is conditional on direct UDP reachability (FR-041)
+
+Everything above assumes the approved origin actually receives the selected WireGuard UDP transport on its approved network path. Nothing in the repository proves that: the only origin-facing observation on record is a remote TCP probe that could not distinguish an unconfigured listener from a blocked path, and no UDP observation exists.
+
+| Inspection result | Consequence |
+|---|---|
+| Origin receives the WireGuard UDP transport directly, no router forwarding | Option A is feasible; proceed |
+| Origin cannot receive it without router port forwarding | **Option A is not feasible for this target.** Production stays blocked and the compute-link transport is redesigned on a separate outbound-initiated or NAT-traversing arrangement |
+
+Forbidden as a fallback in the failing case: router port forwarding (FR-003), a public application port (FR-004), a public listener on the GPU laptop (FR-004, C7), and a paid relay or VPS (FR-007, FR-008). Until inspection resolves this the status is `PENDING TARGET INSPECTION` and must not be recorded as satisfied.
+
 ## C2 — Scope restriction (unchanged)
 
 | Side | Peer scope | Forbidden |
@@ -93,7 +146,7 @@ Feature 002 called the laptop-side listener a "web entry." Under feature 003 tha
 
 | From | To | Allowed |
 |---|---|---|
-| Internet | GPU laptop | **Never** (FR-004) |
+| Internet | GPU laptop | **Never** (FR-004); the only Internet-reachable origin socket is the authenticated WireGuard transport, which is not a direct laptop application path |
 | Approved origin | GPU laptop | Only over this binding |
 | Trusted LAN | GPU laptop | **Yes** — feature 001's existing LAN bindings are retained (FR-037) |
 

@@ -17,6 +17,15 @@ without passing the stated verification is not completion evidence.
 **Test-first rule**: Test tasks in each phase are completed first by showing the
 expected failing assertion. Implementation tasks then make those exact tests pass.
 
+> **Public-entry reconciliation:** The former public-entry approach in T086–T097
+> is withdrawn for execution and superseded by feature
+> `002-cloudflare-public-entry`. Those task records remain historical context;
+> the current Cloudflare-proxied topology and task status live under
+> `specs/002-cloudflare-public-entry/`. Feature
+> `003-outbound-tunnel-entry` is also historical: the owner superseded it after
+> confirming that the institutionally approved address must be the production
+> web origin rather than a fallback-only tier.
+
 ## Format: `[ID] [P?] [Story?] Description`
 
 - **[P]**: Safe parallel work in different files with no dependency on an

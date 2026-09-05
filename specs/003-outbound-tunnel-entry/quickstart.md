@@ -19,7 +19,7 @@ Contracts referenced rather than repeated: [origin-entry](contracts/origin-entry
 | Cloudflare account managing `mangosgo.com` | stage 5 | **pending authorization** |
 | External network (mobile data) | stages 3, 5 | required for acceptance |
 
-> Do **not** run stage 5 until the hostname is authorized. Stages 1–4 are unblocked.
+> Do **not** run stage 5 until the hostname is authorized. Update 2026-09-06: live-origin work in stages 2–6 is MANUAL/BLOCKED until authorized access is available. No public management probes. Local software checks may continue.
 
 ---
 
@@ -28,7 +28,7 @@ Contracts referenced rather than repeated: [origin-entry](contracts/origin-entry
 The highest-value check, because it validates the deadlock fix.
 
 ```bash
-python scripts/verify/test_lan_independence.py
+python scripts/verify/test_lan_independence.py --lan-base-url <LAN-URL> --image fixtures/inputs/valid-reference.png --confirm-binding-down
 ```
 
 **Setup**: stop WireGuard on the laptop, ensure the origin is unreachable, then reboot the laptop.
@@ -49,7 +49,7 @@ Then start WireGuard **without restarting the application**:
 | Public path resumes automatically | ✅ (SC-006e) |
 | Application restart required | ❌ never |
 
-**Fails today.** `web.xml` binds `10.10.0.2` and declares `<depend>WireGuardTunnel$upstream</depend>`; `start_web_service.ps1` polls for the tunnel address before starting. See [compute-link C4](contracts/compute-link.md).
+**Historical pre-fix failure.** `web.xml` binds `10.10.0.2` and declares `<depend>WireGuardTunnel$upstream</depend>`; `start_web_service.ps1` polls for the tunnel address before starting. See [compute-link C4](contracts/compute-link.md).
 
 ---
 
@@ -83,7 +83,7 @@ Assert no app- or proxy-authored spool or complete-body temp file appears. OS pa
 ## Stage 3 — Interim external journey *(Quick Tunnel)*
 
 ```bash
-cloudflared tunnel --url http://127.0.0.1:8080
+cloudflared tunnel --url http://127.0.0.1:8443
 ```
 
 Exercises the real path — origin pass-through, private binding, feature 001 — with only the public name differing (FR-012b).
@@ -117,6 +117,12 @@ Each layer must report independently ([health-chain H1](contracts/health-chain.m
 
 **Recovery policy** (FR-024): the failed layer restarts first; unrelated healthy layers are left alone; a dependent layer is restarted only if still unhealthy after its dependency returned and a grace period elapsed; looping stops after 3 failures at one layer.
 
+**Mobility matrix** (FR-040, SC-017) — move the GPU laptop between at least two distinct external networks (for example university or home Wi-Fi and a mobile hotspot). It must reconnect on its own, and the public DNS record, public hostname, provider tunnel route, approved-origin configuration, feature 001 application configuration, and WireGuard tunnel addressing must all be unchanged before and after every move. `scripts/verify/test_mobility.py` snapshots the configuration files and fails the run if any of them changed.
+
+```bash
+python scripts/verify/test_mobility.py --hostname <public-hostname> --confirm-off-campus
+```
+
 **Decide before running**: GPU/AI-engine layer order, per [health-chain H2](contracts/health-chain.md).
 
 ---
@@ -137,7 +143,10 @@ python scripts/verify/test_external_acceptance.py
 | Off-LAN journey completes | SC-001 |
 | Tagged request correlated at the origin | SC-002 |
 | Connector reports the approved origin address | SC-002a |
-| No inbound application response anywhere | SC-003 |
+| No direct Internet-facing application or management response anywhere (the C1a WireGuard transport port is permitted and is never probed as prohibited; `test_origin_lockdown.py` exits non-zero on any dropped or unclassifiable probe rather than reporting a pass) | SC-003 |
+| Origin transport boundary matches the C1a declaration | SC-018 |
+| Origin directly receives the WireGuard UDP transport without router forwarding | FR-041 |
+| Laptop reconnects across at least two external networks with nothing edited | SC-017 |
 | DNS returns no origin address; no `A` record to the origin | SC-004, FR-011b |
 | Zero cost; no card; no billable fallback | SC-005 |
 | Token absent from every project-controlled log | SC-009 |
@@ -170,3 +179,6 @@ Per [evidence-methods E4](contracts/evidence-methods.md):
 | Origin OS unverified | Per-OS service units | OS-independent config and contracts |
 | Origin address bindability | Source-address binding | Egress **observation** |
 | Recovery-window value | Relying on the fallback | Building it |
+| Origin-local access | Live transport-boundary evidence (T066a) | Declaring and statically verifying the boundary (T058a, T058b) |
+| Direct UDP reachability unverified | Cutover — **and Option A itself** (FR-041, T066b) | Every other stage |
+| Two external networks + live route | Mobility acceptance (T036a) | The mobility design, already fixed by C1/C1b |

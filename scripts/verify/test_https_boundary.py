@@ -1,4 +1,4 @@
-"""Verify the public HTTPS entry from outside the university network (T090).
+"""Verify the proxied public HTTPS entry from outside the university network.
 
 Must be run from a genuinely external vantage point (mobile data, home
 network, or an off-campus VPS) - a probe from inside the university network
@@ -19,6 +19,25 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _evidence import Check, overall_verdict, write_evidence  # noqa: E402
+
+
+def _origin_hop_check(config_path: Path) -> Check:
+    """Check the authored origin contract when the edge is not reachable.
+
+    The provider-to-origin TLS hop cannot be observed from a visitor probe.
+    Static verification therefore confirms the origin configuration requires
+    and validates the provider client certificate and loads certificate files.
+    Live Caddy validation remains a deployment-gated check.
+    """
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return Check("origin-hop-contract", f"config unreadable: {type(exc).__name__}", "Origin CA + verified client certificate", "BLOCKED")
+    required = ("tls ", "client_auth", "require_and_verify", "trusted_ca_cert_file")
+    missing = [item for item in required if item not in text]
+    if missing:
+        return Check("origin-hop-contract", f"missing {', '.join(missing)}", "encrypted and certificate-validated provider-to-origin hop", "FAIL")
+    return Check("origin-hop-contract", "Origin CA and provider client verification directives present", "encrypted and certificate-validated provider-to-origin hop", "PASS")
 
 
 def _https_check(hostname: str) -> Check:
@@ -76,6 +95,7 @@ def main() -> int:
     parser.add_argument("--public-ip", required=True, help="approved edge public IP (161.200.90.4)")
     parser.add_argument("--confirm-off-campus", action="store_true", help="attest this run is from outside the university network")
     parser.add_argument("--evidence", type=Path, default=Path("evidence/public-deployment/tls.md"))
+    parser.add_argument("--origin-config", type=Path, default=Path("deploy/caddy/Caddyfile"), help="authored origin config used for the offline hop-contract check")
     args = parser.parse_args()
 
     if args.public_ip != "161.200.90.4":
@@ -91,6 +111,7 @@ def main() -> int:
             _https_check(args.hostname),
             _http_redirect_check(args.hostname),
             _bare_ip_check(args.public_ip),
+            _origin_hop_check(args.origin_config),
         ]
         verdict = overall_verdict(checks)
 
@@ -99,7 +120,7 @@ def main() -> int:
     write_evidence(
         args.evidence,
         "HTTPS Boundary Evidence",
-        "T090",
+        "T025",
         [f"- Public hostname: {args.hostname}", f"- Edge address (masked): {mask_ip(args.public_ip)}"],
         checks,
         verdict,

@@ -29,6 +29,9 @@ class Settings(BaseModel):
     max_upload_bytes: int = Field(default=MAX_APPROVED_UPLOAD_BYTES, gt=0, le=MAX_APPROVED_UPLOAD_BYTES)
     retention_hours: int = Field(default=MAX_APPROVED_RETENTION_HOURS, gt=0, le=MAX_APPROVED_RETENTION_HOURS)
     min_free_disk_percent: int = Field(default=10, ge=0, le=100)
+    max_pending_jobs: int = Field(default=20, ge=1)
+    max_submissions_per_minute: int = Field(default=30, ge=1)
+    max_identical_per_minute: int = Field(default=5, ge=1)
     workflow_manifest_path: Path = Path("workflows/hunyuan3d/workflow-manifest.json")
 
     @field_validator("comfyui_base_url")
@@ -69,6 +72,9 @@ _ENV_TO_FIELD = {
     "MAX_UPLOAD_BYTES": "max_upload_bytes",
     "RETENTION_HOURS": "retention_hours",
     "MIN_FREE_DISK_PERCENT": "min_free_disk_percent",
+    "MAX_PENDING_JOBS": "max_pending_jobs",
+    "MAX_SUBMISSIONS_PER_MINUTE": "max_submissions_per_minute",
+    "MAX_IDENTICAL_PER_MINUTE": "max_identical_per_minute",
     "WORKFLOW_MANIFEST_PATH": "workflow_manifest_path",
 }
 _SECRET_MARKERS = ("SECRET", "PASSWORD", "TOKEN", "API_KEY")

@@ -26,7 +26,7 @@ credentials-file: ${TUNNEL_CREDENTIALS}
 #   GET /ready        - 200 once the connector has at least one live edge
 #                        connection (the "origin/connector up" health-chain
 #                        layer - contracts/health-chain.md H1)
-#   GET /healthcheck   - basic process liveness
+#   Process liveness must be checked separately using the inspected OS.
 # This is genuinely OS-independent: `curl -sf http://127.0.0.1:20241/ready`
 # runs unchanged on Windows (curl.exe ships with Windows 10+), Linux, and
 # macOS, so the origin's health probe does not need to wait on OS

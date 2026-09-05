@@ -215,7 +215,12 @@ class JobService:
             expires_at=expires_at,
             updated_at=now,
         )
-        await self.repository.accept_job(job, input_asset)
+        try:
+            await self.repository.accept_job(job, input_asset, limits=self.settings)
+        except Exception:
+            # Only this unaccepted job's files are removed; accepted work is untouched.
+            self.storage.remove_job(job_id)
+            raise
         # The accepted event occupies sequence 1 in the durable event log.
         job._event_sequence = 1
         request = GenerationRequest(

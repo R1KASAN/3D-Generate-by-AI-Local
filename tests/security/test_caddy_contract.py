@@ -224,3 +224,24 @@ def test_forbidden_ip_absent_from_deployment_config() -> None:
         f"{FORBIDDEN_IP} must never appear in deployment configuration or network "
         f"scripts. Found it in: {', '.join(offenders)}"
     )
+
+
+def test_origin_correlation_and_all_response_cache_policy():
+    text = _directives_only(_read_caddyfile())
+    assert 'log_append <request_id {http.request.uuid}' in text
+    assert 'header_up X-Request-ID {http.request.uuid}' in text
+    assert 'request>uri delete' in text
+    assert 'request>headers delete' in text
+    assert 'request>remote_ip delete' in text
+    assert 'request>client_ip delete' in text
+    assert 'Strict-Transport-Security' in text
+    assert 'Cache-Control "no-store"' in text.split('reverse_proxy')[0]
+
+
+def test_proxy_matches_connector_and_quickstart_port():
+    text = _directives_only(_read_caddyfile())
+    config = (REPO_ROOT / 'deploy/cloudflared/config.yml.example').read_text(encoding='utf-8')
+    quickstart = (REPO_ROOT / 'specs/003-outbound-tunnel-entry/quickstart.md').read_text(encoding='utf-8')
+    endpoint = re.search(r'http://127\.0\.0\.1:\d+', text).group()
+    assert endpoint in config
+    assert f'--url {endpoint}' in quickstart

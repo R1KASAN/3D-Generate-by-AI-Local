@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Implementation Plan: Cloudflare Public Entry for the 3D Generation Service
 
 **Branch**: `002-cloudflare-public-entry` | **Date**: 2026-09-05 | **Spec**: [spec.md](./spec.md)
@@ -6,7 +8,7 @@
 
 ## Summary
 
-Publish the existing 3D generation service at a Cloudflare-proxied subdomain whose origin remains the university-allocated address `161.200.90.4`. The origin keeps running a reverse proxy that forwards to the GPU laptop over an outbound-initiated tunnel, so the laptop stays freely relocatable.
+Publish the existing 3D generation service at a no-cost Cloudflare-proxied subdomain whose mandatory production origin remains the university-approved address `161.200.90.4`. The project lead has confirmed that this address is approved and required to act as the web server; a provider-operated tunnel may not bypass or demote it to a fallback-only role. The origin keeps running a reverse proxy that forwards to the GPU laptop over an outbound-initiated private compute link, so the laptop stays freely relocatable.
 
 The technical approach turns on three choices, all of which follow from the spec's requirement that the origin be hidden **and** protected rather than merely unadvertised:
 
@@ -36,8 +38,10 @@ This is an amendment to work already on disk from the superseded planning round.
 - Single Internet-facing port (443/tcp). No second public port, per Constitution Principle III.
 - Provider request-body limit on the owner's plan is 100 MB — comfortably above the service's 10 MiB policy. Confirmed, not assumed.
 - Origin must remain powered and hold the allocated address; it is not relocatable.
+- The approved address must be the production origin; an outbound provider connector may not replace or bypass it.
 - GPU laptop must be relocatable with zero configuration change.
 - Compute link must be outbound-initiated from the laptop.
+- Server software, public naming, proxying, and visitor certificate must add zero project-attributable recurring cost. Paid `.com` registration is excluded under the current budget.
 
 **Scale/Scope**: One origin, one GPU worker, serial job execution. No change to concurrency.
 
@@ -55,7 +59,7 @@ This is an amendment to work already on disk from the superseded planning round.
 | VI. Replaceable Integration Boundary | Engine details not leaked publicly | **PASS** — engine remains unreachable from the origin | **PASS** |
 | VII. Cross-Platform Development Discipline | Platform-specific setup isolated and documented | **CONDITIONAL** — origin OS unknown; risk of two drifting firewall implementations | **PASS** — resolved by making one policy table authoritative over both implementations (R7) |
 | VIII. Test-First Critical Behavior | Authorization and boundary behavior tested before implementation | **PASS** — contract test exists and is updated before config changes | **PASS** |
-| IX. Ownership-Critical Decisions | Public access control and exposure owner-approved | **PASS** — mode and ownership decided 2026-09-05 | **PASS** — with FR-029 continuity documentation required |
+| IX. Ownership-Critical Decisions | Public access control and exposure owner-approved | **PASS** — the project lead confirmed the approved address as mandatory production origin and set a zero recurring-cost boundary on 2026-09-05 | **PASS** — with FR-029 continuity and FR-031 through FR-033 acceptance evidence required |
 | X. Scope and Simplicity | New component justified | **CONDITIONAL** — adds a third-party provider to the request path | **PASS** — justified in Complexity Tracking |
 
 **Third-party in the request path** is the one genuine addition and is tracked below. No violation requires an exception entry. Principle III was amended twice for this work: v1.1.0 (2026-09-04) covering the no-site-wide-login policy and the private point-to-point link to a non-public compute node, and **v1.2.0 (2026-09-05)** scoping the no-token-logging rule to project-controlled logs and bounding the residual exposure created by a TLS-terminating proxy. The second amendment was made in response to `/speckit-analyze` finding N1 rather than by reinterpreting the principle.
@@ -118,7 +122,7 @@ scripts/verify/test_origin_lockdown.py       # direct-to-origin must be refused
 scripts/verify/test_dns_disclosure.py        # published DNS must not reveal the origin
 scripts/verify/test_upstream_lan_lockdown.py # laptop port 3000 refused from its own LAN
 docs/operations/cloudflare-setup.md          # provider-side configuration runbook
-docs/operations/naming-continuity.md         # FR-029 — registrar, account, renewal, recovery
+docs/operations/naming-continuity.md         # FR-029/FR-033 — issuer, delegation, account, recovery
 docs/operations/network-permission-request.md # the written ask to university network staff
 deploy/firewall/README.md                    # declares contracts/port-policy.md authoritative
 evidence/public-deployment/operator-inputs.md # origin OS, domain, management path

@@ -2,13 +2,13 @@
 
 **Feature**: `003-outbound-tunnel-entry` | **Date**: 2026-09-06
 
-Resolves every `NEEDS CLARIFICATION` from the plan's Technical Context and records the design decisions the Phase 1 contracts depend on.
+Records the design decisions the Phase 1 contracts depend on. Every open item in the plan's Technical Context is resolved here or carries the explicit marker `PENDING TARGET INSPECTION` — meaning the decision is made and the evidence is missing, not that the architecture is undecided.
 
 ---
 
 ## R1 — Approved origin operating system
 
-**Status**: **UNRESOLVED BY DESIGN.** This is the one unknown that cannot be closed from the repository.
+**Status**: `PENDING TARGET INSPECTION`. The design decision is made; only physical evidence is missing, and it cannot be obtained from the repository. Recorded by tasks.md T065.
 
 **Decision**: Treat the origin OS as unverified and build an OS-independent contract. Per-OS operator steps are written provisionally and marked as requiring confirmation on the physical lab server.
 
@@ -157,8 +157,32 @@ So the interim path exercises the same origin pass-through, private binding, and
 1. **Hostname authorization** for `twin3dgen.mangosgo.com`, plus route creation in the Cloudflare account managing that zone (FR-011).
 2. **Degraded-fallback recovery window** — the maximum time zrok may serve degraded production before an approved stable hostname must replace it (FR-011d). No default is invented here.
 
+## R9 — Option A transport reachability is a precondition, not an assumption
+
+**Decision**: Treat direct WireGuard UDP reachability of the approved origin as a **hard feasibility gate** on Option A, evaluated by target inspection before cutover (FR-041, tasks.md T066b).
+
+**Rationale**: Option A works only because the laptop dials out and the origin answers. That requires the origin to actually receive the selected UDP transport on its approved network path. Nothing in the repository proves it does: `evidence/public-deployment/operator-inputs.md` records a remote TCP probe that could not distinguish an unconfigured listener from a blocked path, and no UDP observation exists at all. An institutional network may filter inbound UDP, or may present the approved address through a NAT the project does not control.
+
+**What is explicitly forbidden as a fallback**: router port forwarding (prohibited by FR-003), a public application port (FR-004), a public listener on the GPU laptop (FR-004, C7), and a paid relay or VPS (FR-007, FR-008). If the gate fails, the correct response is a transport redesign on a separate outbound-initiated or NAT-traversing arrangement, with production blocked meanwhile — not a workaround.
+
+**Alternatives considered**: assume reachability because the address is institutionally approved — rejected, approval is an allocation decision, not a filtering statement. Test it by opening a forward temporarily — rejected, that is the prohibited configuration.
+
+---
+
+## R10 — The origin's WireGuard transport boundary is feature-003 work
+
+**Decision**: Specify, verify, and evidence the origin transport boundary as part of this feature rather than inheriting feature 002's posture (SC-018).
+
+**Rationale**: Under feature 002 the origin's inbound surface was the hardened `:443` listener, and the WireGuard posture rode along behind it. Option A removes that listener and leaves the WireGuard UDP port as the origin's *only* Internet-reachable socket. A boundary that is the sole remaining inbound surface cannot be carried forward untested. The boundary is written OS-independently for the same reason as R1, with per-OS rule snippets kept provisional.
+
+**Negative testing is required**, not optional: a verifier that only confirms the expected rules exist will also pass a configuration that has those rules *plus* an unrelated inbound listener. The negative fixtures exist to prove the verifier rejects that case.
+
+---
+
 ## Physical-access items (block cutover only)
 
-1. Origin OS and version (R1).
-2. Whether `161.200.90.4` is directly bindable on the origin (R5).
-3. The origin's actual outbound egress address (R5).
+1. Origin OS and version (R1) — `PENDING TARGET INSPECTION`, tasks.md T065.
+2. Whether `161.200.90.4` is directly bindable on the origin (R5) — `PENDING TARGET INSPECTION`, tasks.md T066.
+3. The origin's actual outbound egress address (R5) — `PENDING TARGET INSPECTION`, tasks.md T065.
+4. Whether the origin directly receives the WireGuard UDP transport without router port forwarding (R9) — `PENDING TARGET INSPECTION`, tasks.md T066b. **If this fails, Option A is not feasible for this target (FR-041).**
+5. That the running origin firewall and WireGuard configuration match the declared transport boundary (R10) — `PENDING TARGET INSPECTION`, tasks.md T066a.

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
 from .database import Database
 from ..domain.jobs import AssetKind, GenerationJob, JobAsset, JobEvent, JobState
+from ..config import Settings
+
+
+class SubmissionLimitError(RuntimeError):
+    """Uniform refusal: never disclose another job's existence or fingerprint."""
+
+    def __init__(self) -> None:
+        super().__init__("Submission capacity temporarily unavailable")
 
 
 def _serialize_time(value: datetime) -> str:
@@ -25,11 +33,30 @@ class JobRepository:
     def __init__(self, database: Database) -> None:
         self.database = database
 
-    async def accept_job(self, job: GenerationJob, input_asset: JobAsset) -> None:
+    async def accept_job(
+        self, job: GenerationJob, input_asset: JobAsset, *, limits: Settings | None = None
+    ) -> None:
         if input_asset.job_id != job.job_id:
             raise ValueError("input asset must belong to the accepted job")
         async with self.database.connection() as connection:
             await connection.execute("BEGIN IMMEDIATE")
+            if limits is not None:
+                cutoff = _serialize_time(datetime.now(timezone.utc) - timedelta(seconds=60))
+                cursor = await connection.execute(
+                    """SELECT
+                        (SELECT COUNT(*) FROM generation_jobs WHERE status IN ('queued', 'processing')),
+                        (SELECT COUNT(*) FROM generation_jobs WHERE created_at >= ?),
+                        (SELECT COUNT(*) FROM job_assets WHERE kind = 'input' AND sha256 = ? AND created_at >= ?)
+                    """,
+                    (cutoff, input_asset.sha256, cutoff),
+                )
+                counts = await cursor.fetchone()
+                if counts is None or any(count >= bound for count, bound in zip(counts, (
+                    limits.max_pending_jobs,
+                    limits.max_submissions_per_minute,
+                    limits.max_identical_per_minute,
+                ))):
+                    raise SubmissionLimitError
             await connection.execute(
                 """
                 INSERT INTO generation_jobs (

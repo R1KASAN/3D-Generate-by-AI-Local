@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Contract: Origin Entry Behaviour
 
 **Feature**: `002-cloudflare-public-entry` | **Date**: 2026-09-05
@@ -87,6 +89,7 @@ Upstream dial and health-check timeouts must be short. The laptop being unreacha
 | Rule | Enforcement |
 |---|---|
 | `161.200.90.4` is the only permitted origin address | Hard refusal in the configuration script — not a parameter default |
+| The approved address is the production web origin (FR-031) | Provider routing export and external request trace; a provider-operated tunnel target is a contract failure |
 | `161.200.90.3` MUST NOT appear in `deploy/**` or any network-applying script | Static test |
 | `161.200.90.3` MUST NOT be probed by any verification script | Static test |
 | `161.200.90.3` MAY appear in `docs/**`, `evidence/**`, and in the tests asserting its exclusion | Scope limit — a repository-wide ban would fail against the project's own documentation of the restriction |

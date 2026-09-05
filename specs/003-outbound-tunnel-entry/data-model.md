@@ -35,7 +35,7 @@ The outbound relationship between the approved origin and the provider edge.
 |---|---|---|
 | `provider` | enum | `cloudflare` (primary) or `zrok` (degraded fallback) |
 | `host` | fixed | The approved origin. Running on the GPU laptop is forbidden (FR-011e) |
-| `direction` | fixed | Outbound-initiated. No inbound port (FR-003) |
+| `direction` | fixed | Outbound-initiated. No direct Internet-facing application or management listener (FR-003); the C1a WireGuard UDP transport listener is a separate private-link socket, not part of this entity |
 | `credential_location` | path | Outside Git, least-privilege (FR-032) |
 | `start_policy` | enum | Automatic on boot, dependency-ordered (FR-023) |
 | `revocation_state` | enum | `active` / `revoked` / `replaced` |

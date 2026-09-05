@@ -1,4 +1,4 @@
-"""Guided mobility acceptance test - the project's core success criterion (T094 support).
+"""Guided mobility acceptance test - the project's core success criterion (feature-002 T035/T049 support).
 
 Physically moving the GPU laptop between networks cannot be automated by a
 script; this tool instead walks the operator through the six scenarios the
@@ -24,9 +24,9 @@ also run a real generation at every scenario that expects the app to be up.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import ssl
 import sys
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -42,6 +42,21 @@ SCENARIOS = [
     ("network-cut", "Laptop's internet disconnected - maintenance page appears, not a raw 502", "maintenance"),
     ("power-cycle-30min", "Laptop powered off 30 minutes then restarted - tunnel recovers on its own", "app-up"),
 ]
+
+CONFIG_PATHS = (
+    Path("deploy/caddy/Caddyfile"),
+    Path("deploy/caddy/.env.example"),
+    Path("deploy/wireguard/upstream.conf.example"),
+    Path("deploy/wireguard/edge.conf.example"),
+)
+
+
+def _config_snapshot() -> dict[str, str]:
+    snapshot: dict[str, str] = {}
+    for path in CONFIG_PATHS:
+        if path.exists():
+            snapshot[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return snapshot
 
 
 def _probe(hostname: str, expect: str) -> Check:
@@ -85,6 +100,7 @@ def main() -> int:
     print("scenario has failed - do not edit around it.\n")
 
     all_checks: list[Check] = []
+    initial_config = _config_snapshot()
     for key, description, expect in SCENARIOS:
         print(f"--- Scenario: {description} ---")
         if not args.non_interactive:
@@ -94,11 +110,21 @@ def main() -> int:
         all_checks.append(named)
         print(f"  -> {named.verdict}: {named.observed}\n")
 
+    final_config = _config_snapshot()
+    all_checks.append(
+        Check(
+            "configuration-unchanged",
+            "unchanged" if initial_config == final_config else "changed",
+            "Caddy and WireGuard configuration snapshots identical before and after mobility run",
+            "PASS" if initial_config == final_config else "FAIL",
+        )
+    )
+
     verdict = overall_verdict(all_checks)
     write_evidence(
         args.evidence,
         "Mobility Acceptance Evidence",
-        "T094",
+        "T035/T049",
         [f"- Hostname: {args.hostname}", "- DNS, public IP, Caddy upstream, and WireGuard addressing were not changed during this run (operator-attested)."],
         all_checks,
         verdict,

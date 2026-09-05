@@ -11,13 +11,13 @@ the external user received is bit-for-bit the file the laptop actually
 generated, not a truncated or corrupted transfer through the edge/tunnel.
 
 --streaming-check-dir (feature-003 T019, SC-002b) adds a snapshot-diff
-check around the same upload/download: it records the approved origin's
+diagnostic around the same upload/download: it records the approved origin's
 proxy working/temp directory contents before the flow and after, and fails
 if any new file appears - the origin must relay bodies as a stream and must
 never spool an upload or a generated artifact to disk. This only makes
 sense when run with filesystem access to the origin (e.g. by the operator,
 alongside this otherwise-external test), so it is BLOCKED, not skipped,
-when the directory is not supplied.
+without a complete operator trace. Before/after snapshots do not exclude transient files. Use --streaming-only with --streaming-observation for operator-attested trace metadata.
 """
 
 from __future__ import annotations
@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from _evidence import Check, overall_verdict, write_evidence  # noqa: E402
+from _streaming import streaming_check  # noqa: E402
 
 
 def _multipart_body(path: Path) -> tuple[bytes, str]:
@@ -49,14 +50,23 @@ def _multipart_body(path: Path) -> tuple[bytes, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--hostname", required=True)
-    parser.add_argument("--image", type=Path, required=True)
+    parser.add_argument("--hostname")
+    parser.add_argument("--image", type=Path)
+    parser.add_argument("--streaming-only", action="store_true", help="Validate operator-attested origin trace metadata without network access")
+    parser.add_argument("--streaming-observation", type=Path, help="Sanitized metadata from an origin-local filesystem trace; see docs/operations/public-cutover.md")
     parser.add_argument("--confirm-off-campus", action="store_true")
     parser.add_argument("--expected-sha256", default=None)
     parser.add_argument("--max-wait-seconds", type=int, default=1800)
     parser.add_argument("--streaming-check-dir", type=Path, default=None, help="origin proxy working/temp directory to snapshot before and after the flow (SC-002b)")
     parser.add_argument("--evidence", type=Path, default=Path("evidence/public-deployment/full-flow.md"))
     args = parser.parse_args()
+    if args.streaming_only:
+        check = streaming_check(args.streaming_observation)
+        write_evidence(args.evidence, "Origin streaming observation", "T019", [], [check], check.verdict,
+                       "Operator-attested manual trace; this verifier does not independently observe the origin filesystem.")
+        return 0 if check.verdict == "PASS" else 1
+    if not args.hostname or args.image is None:
+        parser.error("--hostname and --image are required for the external flow")
     base = f"https://{args.hostname}"
 
     def _snapshot(directory: Path | None) -> set[str] | None:
@@ -141,8 +151,15 @@ def main() -> int:
             "no-spooled-request-response-body",
             f"{len(new_files)} new file(s): {', '.join(sorted(new_files)) or 'none'}",
             "no new file appears - the origin streams, it never spools an upload or artifact to disk",
-            "PASS" if not new_files else "FAIL",
+            "BLOCKED" if not new_files else "FAIL",
         ))
+
+    # Before/after snapshots miss files created and deleted during transfers.
+    # Full SC-002b evidence is a separate origin-local, operator-attested trace.
+    trace = streaming_check(args.streaming_observation)
+    if trace.verdict == "PASS":
+        checks = [c for c in checks if c.name != "no-spooled-request-response-body" or c.verdict == "FAIL"]
+    checks.append(trace)
 
     verdict = overall_verdict(checks)
     write_evidence(

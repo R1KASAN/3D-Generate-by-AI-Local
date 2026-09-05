@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Contract: Compute Link (Origin ↔ GPU Laptop)
 
 **Feature**: `002-cloudflare-public-entry` | **Date**: 2026-09-05

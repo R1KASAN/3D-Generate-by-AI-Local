@@ -1,3 +1,11 @@
+## Feature 003 operating procedure (2026-09-06)
+
+The current public-deployment procedure is [tunnel-setup.md](tunnel-setup.md) and [public-cutover.md](public-cutover.md). Earlier feature-002 network instructions anywhere below are historical and must not be executed. Preserve Phase 7–10 hardware/LAN validation. Preserve the trusted-LAN port forward.
+
+The GPU laptop starts its loopback job service, API, and AI engine without WireGuard. The binding retries independently; its return restores the public path without restarting the application. The origin starts its outbound connector and loopback origin pass-through independently of laptop availability. Verify readiness before advertising health. Probe each owned layer separately with `powershell -NoProfile -File scripts/windows/health_chain.ps1 -All` on the laptop; inspect connector readiness on the origin and provider reachability externally. An origin/connector outage returns the provider error and must not be diagnosed as an application fault. Failed-layer recovery stops after three attempts and waits for dependent grace before acting again.
+
+All live-origin work is MANUAL/BLOCKED: no authorized origin connection is available. Do not probe public remote-management ports. Reboot and interruption trials require actual hardware evidence. To roll back, stop/disable the connector at the authorized origin console, preserving local jobs, artifacts, and LAN operation. Never restore inbound HTTPS as rollback.
+
 # Runbook: Windows NVIDIA AI Server — Hardware Gate to Public Deployment (Phase 7–12)
 
 **Owner:** Windows Server Operator; opening public access always requires passing the feature-002 owner, permission, and management gates first | **Frequency:** As needed, once per server build | **Last Updated:** 2026-09-05 | **Last Run:** Not yet run

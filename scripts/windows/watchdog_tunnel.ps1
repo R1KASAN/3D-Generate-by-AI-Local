@@ -10,7 +10,7 @@ param(
     [string]$ComfyServiceName = 'Local3D-ComfyUI',
     [string]$StateFile = (Join-Path $env:ProgramData 'Local3D\watchdog-state.json'),
     [int]$CooldownMinutes = 15,
-    [int]$MaxRestartsBeforeAlert = 3,
+    [ValidateRange(1, 3)][int]$MaxRestartsBeforeAlert = 3,
     [int]$DependentGraceMinutes = 5
 )
 
@@ -47,7 +47,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-. (Join-Path $PSScriptRoot 'health_chain.ps1')
+. (Join-Path $PSScriptRoot 'health_chain.ps1') -EdgeTunnelAddress $EdgeTunnelAddress -WireGuardInterface $WireGuardInterface -WebPort $WebPort -ComfyBaseUrl $ComfyBaseUrl
 
 function Get-State {
     if (Test-Path -LiteralPath $StateFile) {
@@ -59,6 +59,7 @@ function Get-State {
         JobServiceRestartCount     = 0
         JobServiceLastRestart      = $null
         GpuLastUnhealthyAt         = $null
+        GpuRecoveredAt             = $null
         GpuLastAlertAt             = $null
         AiEngineRestartCount       = 0
         AiEngineLastRestart        = $null
@@ -73,7 +74,7 @@ function Save-State($state) {
 
 function Test-CooldownElapsed($lastRestart, [int]$minutes) {
     if ($null -eq $lastRestart -or $lastRestart -eq '') { return $true }
-    return ([DateTime]::UtcNow - [DateTime]::Parse($lastRestart)) -gt (New-TimeSpan -Minutes $minutes)
+    return ([DateTimeOffset]::UtcNow - [DateTimeOffset]::Parse($lastRestart)) -gt (New-TimeSpan -Minutes $minutes)
 }
 
 function Write-Log($level, $message) {
@@ -85,6 +86,9 @@ function Write-Log($level, $message) {
 }
 
 $state = Get-State
+if (-not $state.PSObject.Properties['GpuRecoveredAt']) {
+    $state | Add-Member -NotePropertyName GpuRecoveredAt -NotePropertyValue $null
+}
 $exitCode = 0
 
 $privateBinding = Test-PrivateBindingHealth
@@ -101,13 +105,15 @@ if (-not $privateBinding.Healthy) {
         Write-Log 'WARN' "PrivateBinding unhealthy but within the $CooldownMinutes-minute cooldown of its last restart. Waiting."
     } else {
         Write-Log 'WARN' "PrivateBinding unhealthy ($($privateBinding.Detail)). Restarting $WireGuardServiceName only - JobService is unaffected by this layer."
+        $state.PrivateBindingRestartCount = [int]$state.PrivateBindingRestartCount + 1
+        $state.PrivateBindingLastRestart = [DateTime]::UtcNow.ToString('o')
+        Save-State $state
         try {
             Restart-Service -Name $WireGuardServiceName -Force -ErrorAction Stop
-            $state.PrivateBindingRestartCount = [int]$state.PrivateBindingRestartCount + 1
-            $state.PrivateBindingLastRestart = [DateTime]::UtcNow.ToString('o')
             Write-Log 'INFO' "Restarted $WireGuardServiceName (attempt $($state.PrivateBindingRestartCount) of $MaxRestartsBeforeAlert)."
         } catch {
             Write-Log 'ERROR' "Failed to restart ${WireGuardServiceName}: $($_.Exception.Message)"
+            $exitCode = 1
         }
     }
 } elseif ([int]$state.PrivateBindingRestartCount -ne 0) {
@@ -124,13 +130,15 @@ if (-not $jobService.Healthy) {
         Write-Log 'WARN' "JobService unhealthy but within the $CooldownMinutes-minute cooldown of its last restart. Waiting."
     } else {
         Write-Log 'WARN' "JobService unhealthy ($($jobService.Detail)). Restarting $WebServiceName only - PrivateBinding health, checked above, is independent of this."
+        $state.JobServiceRestartCount = [int]$state.JobServiceRestartCount + 1
+        $state.JobServiceLastRestart = [DateTime]::UtcNow.ToString('o')
+        Save-State $state
         try {
             Restart-Service -Name $WebServiceName -Force -ErrorAction Stop
-            $state.JobServiceRestartCount = [int]$state.JobServiceRestartCount + 1
-            $state.JobServiceLastRestart = [DateTime]::UtcNow.ToString('o')
             Write-Log 'INFO' "Restarted $WebServiceName (attempt $($state.JobServiceRestartCount) of $MaxRestartsBeforeAlert)."
         } catch {
             Write-Log 'ERROR' "Failed to restart ${WebServiceName}: $($_.Exception.Message)"
+            $exitCode = 1
         }
     }
 } elseif ([int]$state.JobServiceRestartCount -ne 0) {
@@ -140,6 +148,7 @@ if (-not $jobService.Healthy) {
 
 # --- Layer: Gpu (no safe automated remedy - diagnose and alert only) ---
 if (-not $gpu.Healthy) {
+    $state.GpuRecoveredAt = $null
     if (-not $state.GpuLastUnhealthyAt) {
         $state.GpuLastUnhealthyAt = [DateTime]::UtcNow.ToString('o')
     }
@@ -151,6 +160,7 @@ if (-not $gpu.Healthy) {
 } elseif ($state.GpuLastUnhealthyAt) {
     Write-Log 'INFO' 'Gpu recovered.'
     $state.GpuLastUnhealthyAt = $null
+    $state.GpuRecoveredAt = [DateTime]::UtcNow.ToString('o')
     $state.GpuLastAlertAt = $null
 }
 
@@ -163,7 +173,7 @@ if (-not $gpu.Healthy) {
         Write-Log 'WARN' "AiEngine unhealthy ($($aiEngine.Detail)) but Gpu is also unhealthy - not acting on AiEngine until Gpu recovers."
     }
 } elseif (-not $aiEngine.Healthy) {
-    $withinGrace = $state.GpuLastUnhealthyAt -and -not (Test-CooldownElapsed $state.GpuLastUnhealthyAt $DependentGraceMinutes)
+    $withinGrace = $state.GpuRecoveredAt -and -not (Test-CooldownElapsed $state.GpuRecoveredAt $DependentGraceMinutes)
     if ($withinGrace) {
         Write-Log 'WARN' "AiEngine unhealthy ($($aiEngine.Detail)) shortly after Gpu recovered. Waiting up to $DependentGraceMinutes minutes for it to recover on its own before treating it as a dependent-layer restart."
     } elseif ($state.AiEngineRestartCount -ge $MaxRestartsBeforeAlert) {
@@ -173,13 +183,15 @@ if (-not $gpu.Healthy) {
         Write-Log 'WARN' "AiEngine unhealthy but within the $CooldownMinutes-minute cooldown of its last restart. Waiting."
     } else {
         Write-Log 'WARN' "AiEngine unhealthy ($($aiEngine.Detail)) with Gpu healthy. Restarting $ComfyServiceName."
+        $state.AiEngineRestartCount = [int]$state.AiEngineRestartCount + 1
+        $state.AiEngineLastRestart = [DateTime]::UtcNow.ToString('o')
+        Save-State $state
         try {
             Restart-Service -Name $ComfyServiceName -Force -ErrorAction Stop
-            $state.AiEngineRestartCount = [int]$state.AiEngineRestartCount + 1
-            $state.AiEngineLastRestart = [DateTime]::UtcNow.ToString('o')
             Write-Log 'INFO' "Restarted $ComfyServiceName (attempt $($state.AiEngineRestartCount) of $MaxRestartsBeforeAlert)."
         } catch {
             Write-Log 'ERROR' "Failed to restart ${ComfyServiceName}: $($_.Exception.Message)"
+            $exitCode = 1
         }
     }
 } elseif ([int]$state.AiEngineRestartCount -ne 0) {

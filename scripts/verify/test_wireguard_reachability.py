@@ -146,7 +146,7 @@ def main() -> int:
 
     if args.mode == "negative":
         checks = [_negative_check(args.public_address, args.wireguard_port)]
-        context = [f"- Mode: negative (unauthenticated UDP probe)", f"- Edge address (masked): {mask_ip(args.public_address)}"]
+        context = ["- Mode: negative (unauthenticated UDP probe)", f"- Edge address (masked): {mask_ip(args.public_address)}"]
         footnote = "A negative-only PASS is NOT sufficient evidence that 51820/udp is open - it is indistinguishable from a firewall drop. Positive mode or the full mobility test must also pass."
     else:
         checks = _positive_check(args.tunnel_address, args.edge_tunnel_address, args.wg_interface)

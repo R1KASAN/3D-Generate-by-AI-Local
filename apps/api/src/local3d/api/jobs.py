@@ -8,6 +8,7 @@ from fastapi import APIRouter, File, Header, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
 from ..domain.jobs import GenerationJob, JobState
+from ..persistence.jobs import SubmissionLimitError
 from ..services.image_validation import LowStorageError, UploadValidationError
 from ..services.job_service import ExpiredJobError, JobNotFoundError, JobService, ResultNotReadyError
 
@@ -74,6 +75,12 @@ async def create_job(request: Request, file: UploadFile = File(...)) -> JSONResp
             file.file,
             filename=file.filename or "",
             content_type=file.content_type,
+        )
+    except SubmissionLimitError:
+        return JSONResponse(
+            status_code=429,
+            content={"error": {"code": "submission_limited", "message": "Submission capacity temporarily unavailable"}},
+            headers={"Retry-After": "60", "Cache-Control": "no-store"},
         )
     except LowStorageError:
         return JSONResponse(

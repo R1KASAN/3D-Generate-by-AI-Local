@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Phase 1 Data Model: Request Path, Trust Boundaries, and Availability State
 
 **Feature**: `002-cloudflare-public-entry` | **Date**: 2026-09-05
@@ -12,11 +14,11 @@ This feature introduces no application data. What it does introduce is a **reque
 
 | Field | Value / rule |
 |---|---|
-| Form | A single subdomain of an owner-registered zone |
+| Form | A single no-cost delegated subdomain; exact accepted label pending |
 | DNS hosting | Cloudflare |
 | Proxy status | **Proxied** (required) |
 | Resolves to | Cloudflare anycast addresses — never the origin address (FR-001b) |
-| Owned by | The operator, personally (owner decision, 2026-09-05) |
+| Controlled by | Delegation issuer plus the operator-controlled provider account; continuity terms recorded under FR-029 |
 | Stability | MUST NOT change when the GPU laptop relocates (FR-004) |
 
 ### Origin
@@ -29,6 +31,7 @@ This feature introduces no application data. What it does introduce is a **reque
 | Certificate | Cloudflare Origin CA (R1) — not publicly trusted, not publicly validated |
 | Accepts | Only connections presenting a valid Cloudflare client certificate (R3) |
 | Relocatable | **No.** Must stay powered and hold the allocated address |
+| Approval role | Mandatory production web origin under FR-031; never fallback-only and never bypassed by a provider tunnel |
 
 ### Compute link
 

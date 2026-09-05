@@ -1,0 +1,10 @@
+[
+  {"dependency": "cloudflared (connector software)", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "Cloudflare Tunnel (free plan)", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "twin3dgen.mangosgo.com", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "Visitor TLS certificate", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "Caddy (loopback pass-through)", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "WireGuard (private binding)", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "WinSW (service supervision)", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false},
+  {"dependency": "zrok (degraded-production fallback)", "recurring_price_usd": 0, "payment_card_required": false, "paid_fallback_enabled": false}
+]

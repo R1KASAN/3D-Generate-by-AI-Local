@@ -1,3 +1,11 @@
+## ขั้นตอนปฏิบัติสำหรับ feature 003 (2026-09-06)
+
+ใช้ [tunnel-setup.md](tunnel-setup.md) และ [public-cutover.md](public-cutover.md) เป็นขั้นตอน public deployment ปัจจุบัน คำสั่งเครือข่ายของ feature 002 ด้านล่างเป็นประวัติเท่านั้น ห้ามนำไปใช้ คงการตรวจสอบฮาร์ดแวร์และ LAN ใน Phase 7–10 และคง trusted-LAN port forward
+
+GPU laptop เริ่ม job service, API และ AI engine ที่ loopback ได้โดยไม่รอ WireGuard ส่วน private binding retry แยกจากแอป เมื่อ binding กลับมา public path ต้องกลับได้โดยไม่ restart แอป Origin เริ่ม outbound connector และ origin pass-through ที่ loopback ได้แม้ laptop ปิดอยู่ ต้องตรวจ readiness ก่อนรายงาน healthy ตรวจแต่ละ layer แยกกันด้วย `powershell -NoProfile -File scripts/windows/health_chain.ps1 -All` บน laptop ตรวจ connector readiness ที่ origin และตรวจ provider จากภายนอก หาก origin/connector หยุดจะเห็น provider error ไม่ใช่ application fault ให้แก้เฉพาะ layer ที่เสีย หยุดหลังลองสามครั้ง และรอ grace period หลัง dependency กลับมาก่อน restart dependent
+
+งาน live-origin ทั้งหมดเป็น MANUAL/BLOCKED เพราะยังไม่มีช่องทางเข้าถึง origin ที่ได้รับอนุญาต ห้าม probe public remote-management ports การ reboot และตัดเครือข่ายต้องมีหลักฐานจากเครื่องจริง Rollback โดยหยุดและปิด auto-start ของ connector จาก console ที่ได้รับอนุญาต ห้ามลบงานหรือผลลัพธ์และห้ามปิด LAN path ห้ามเปิด inbound HTTPS กลับมา
+
 # Runbook: Windows NVIDIA AI Server — Hardware Gate ถึง Public Deployment (Phase 7–12)
 
 **Owner:** Windows Server Operator; การเปิด public access ต้องผ่าน owner, permission และ management gate ของ feature-002 ก่อนทุกครั้ง | **Frequency:** As needed, ครั้งเดียวต่อการ build server หนึ่งเครื่อง | **Last Updated:** 2026-09-05 | **Last Run:** Not yet run

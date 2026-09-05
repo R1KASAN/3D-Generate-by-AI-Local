@@ -1,66 +1,71 @@
-# Phase 11 Owner Gate — BLOCKED
+# Phase 11 Owner Gate — Updated for Cloudflare Public Entry
 
-**Date:** 2026-09-04
-**Feature:** `001-local-3d-generation`
-**Task:** T085
-**Verdict:** `BLOCKED`
+**Date:** 2026-09-05
+**Feature:** `002-cloudflare-public-entry` (updates the gate inherited from
+`001-local-3d-generation`)
+**Task:** T005
+**Verdict:** `BLOCKED — deployment evidence still pending`
 
-Phase 11 cannot proceed to public traffic because required decisions below
-remain unapproved in writing. Repository artifacts (Caddy config, WireGuard
-templates, firewall scripts, tests) have been authored under Stage 1 of
-`C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` — this is
-config-as-code preparation, not deployment. No public infrastructure has
-been changed.
+This record captures the owner decisions for the new public-entry topology.
+It does not claim that live DNS, certificates, firewall rules, or public
+traffic have been changed. Network addresses in this evidence artifact are
+masked per FR-026; exact values belong only in approved contracts or host-local
+configuration.
 
-## Architecture (updated 2026-09-04)
+## Requested architecture
 
-Public IP `161.200.90.4` was assigned to this project by memo วฟ.2174/2567
-(26 ธ.ค. 2567, ภาควิชาวิศวกรรมไฟฟ้า จุฬาลงกรณ์มหาวิทยาลัย), along with an
-authentication exemption. **`161.200.90.3` is allocated separately and is
-never to be configured, forwarded, or probed by anything in this
-repository** — enforced in code by
-`deploy/firewall/configure-public-edge.ps1` and
-`tests/security/test_caddy_contract.py`.
+The requested public entry is a Cloudflare-proxied subdomain. The
+university-allocated origin address is retained as the origin
+(`161.200.90.xxx`, masked here). The GPU laptop remains a separate mobile
+compute node and connects outbound to the origin through the private WireGuard
+link; moving the laptop must not require DNS or public proxy changes.
 
-The GPU compute node (this laptop, RTX 5070) is **not** the box that holds
-`161.200.90.4`. It connects outbound to a fixed edge server over a
-WireGuard tunnel (`10.10.0.2` ↔ `10.10.0.1`), which is what lets the
-laptop move between the university, home, and mobile networks without any
-DNS, firewall, or Caddy configuration change. See the plan above for full
-rationale, the port policy table, and the mobility acceptance test.
+Cloudflare terminates visitor TLS and connects to the origin using an Origin CA
+certificate with Full (strict) validation. The origin must require and verify
+the provider client certificate and must reject direct traffic that did not
+arrive through the provider. The application remains unchanged.
 
-## Required decisions
+The alternate allocated address is out of scope and must never be configured,
+forwarded, or probed. It is not reproduced here so this evidence remains
+address-masked.
 
-| Decision | Status | Required evidence |
+## Decisions recorded on 2026-09-05
+
+| Decision | Status | Evidence / constraint |
 |---|---|---|
-| Model-license and permitted-user territory scope | BLOCKED | Written owner approval naming the permitted scope. Unaffected by the IP assignment; still outstanding. |
-| Domain or DDNS provider/hostname | BLOCKED (narrowed) | DDNS is no longer relevant (the assignment is static). Still need the actual hostname owner will use — required for ACME (see `.env.example`'s note on the IP-certificate fallback if no hostname is available). |
-| Public-entry policy | APPROVED | Owner confirmed 2026-09-04: no site-wide Caddy username/password; job resources remain protected by per-job tokens. Constitution amended to 1.1.0 (2026-09-04) to permit this policy explicitly. |
-| DNS/DDNS account owner | BLOCKED | Written owner approval naming who controls the DNS zone/account (request ticket reference, not credentials). |
-| Current Public IP revalidation | PENDING-CUTOVER | Cannot be marked APPROVED before the edge server actually holds and serves from `161.200.90.4` — the assignment memo is not itself current-state evidence (see `specs/001-local-3d-generation/quickstart.md`). To be closed with a freshly observed, masked value once Stage 3 of the plan runs. |
-| Static/dynamic and CGNAT status | APPROVED (in principle) | The memo confirms a static, directly-assigned, non-CGNAT address. Evidence of the address being genuinely reachable with no NAT in front of it is still PENDING-CUTOVER, to be closed alongside the row above. |
-| Router 80/443 forwarding capability | BLOCKED (re-scoped) | No home/office router exists in this topology — the address is assigned directly to a university-network edge server. The equivalent gate is: **the university border firewall permits inbound 443/tcp, 80/tcp, and 51820/udp (WireGuard) to 161.200.90.4**, and no other inbound port. Written confirmation from university IT is still required. |
+| Public-entry mode | **APPROVED** | Cloudflare proxy in front of the allocated origin; the origin remains the real production origin. |
+| Domain and provider account ownership | **PENDING — owner evidence required** | No hostname or Cloudflare account identity was supplied in the current workspace; do not infer personal ownership. |
+| Public access policy | **PENDING — owner approval record required for exposure** | Repository configuration preserves no site-wide login and per-job capability tokens, but final public exposure requires an explicit owner decision and the v1.2.0 residual-exposure conditions. |
+| Permitted users, territory, and model license | **PENDING — owner gate unresolved** | No verified model-license or permitted-territory approval is present. Do not expose the service publicly until the owner records the applicable decision. |
+| Origin address assignment and live reachability | **PENDING-CUTOVER** | The allocation memo is the basis for the approved address, but the origin must be freshly checked to hold it and be externally reachable before deployment. |
+| Origin OS and port 443 listener | **PENDING** | Must be confirmed on the origin; the current workstation is the mobile GPU laptop, not the origin. |
+| Origin management path | **PENDING — T008** | Management port, trusted source range, and access proof must be recorded before default-deny is applied. |
+| Border-firewall permission set | **APPROVED — T007** | The project lead explicitly approved exactly `443/tcp` from the provider's published ranges and `51820/udp` from any source; `network-permissions.md` records the approval. This is authorization only; live application and verification remain pending. Port `80/tcp` is explicitly not requested. |
+
+## Re-scoped former router-forwarding gate
+
+There is no home or office router in this topology. The old “router 80/443
+forwarding” question is replaced by the university border-firewall permission
+set defined in
+[`contracts/port-policy.md`](../../specs/002-cloudflare-public-entry/contracts/port-policy.md):
+
+- `443/tcp` inbound to the masked approved origin, restricted to the provider
+  ranges.
+- `51820/udp` inbound to the masked approved origin from any source, with
+  WireGuard public-key authentication providing peer admission.
+- `80/tcp` is not opened; all other non-management ports remain denied.
+
+The written confirmation is retained in
+[`network-permissions.md`](network-permissions.md). Discovering another
+required inbound permission during cutover is a planning defect under FR-030.
 
 ## Safety boundary
 
-- Caddy configuration has been authored in the repository
-  (`deploy/caddy/Caddyfile`) but has not been deployed or exposed anywhere.
-- WireGuard configuration templates have been authored
-  (`deploy/wireguard/*.conf.example`) with no real keys committed.
-- DNS/DDNS and any border-firewall rule have not been changed.
-- Windows Firewall rules on either machine have not been applied from the
-  new scripts (`deploy/firewall/configure-upstream-boundary.ps1`,
-  `deploy/firewall/configure-public-edge.ps1`) — both require
-  `-OwnerApproved` and fail closed on any precondition violation.
-- No certificate has been requested or accepted.
-- No public port has been opened.
-- Ports 3000, 8000, 8188, and 3389 remain outside public reach in the
-  approved design (3000 is reachable only via the WireGuard tunnel from
-  the edge's tunnel address, never from the public internet or from the
-  laptop's physical LAN).
-
-T086–T092 remain pending until every blocked decision above is explicitly
-approved in writing by the owner/operator, and until university IT
-confirms the border-firewall port policy. The owner-approved access-control
-policy is public HTTPS entry without a site-wide login plus per-job token
-protection for status, preview, and download.
+- Repository configuration is preparation only; no public infrastructure was
+  changed while this gate was updated.
+- No certificate was requested or accepted.
+- No DNS record or firewall rule was changed.
+- No real private key, API token, password, or job token is stored in this
+  evidence file.
+- The gate remains blocked until the pending operator inputs, management-path
+  proof, and later external acceptance evidence are complete.

@@ -1,18 +1,29 @@
+> **Superseded by [feature 003](../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Feature Specification: Cloudflare Public Entry for the 3D Generation Service
 
 **Feature Branch**: `002-cloudflare-public-entry`
 
 **Created**: 2026-09-05
 
-**Status**: Draft
+**Status**: Approved architecture - implementation evidence pending
 
 **Input**: User description: "แก้ไขสถาปัตยกรรม public access ของฟีเจอร์ 001-local-3d-generation จากเดิมที่วางแผนใช้ Edge server + WireGuard tunnel เปลี่ยนมาใช้ Cloudflare เป็นชั้นหน้าบ้าน (public entry) แทน — ให้ผู้ใช้ภายนอกเข้าถึงเว็บและสั่งงาน AI ผ่าน subdomain ที่จัดการด้วย Cloudflare โดยที่เครื่อง GPU ยังคงย้ายเครือข่ายได้อิสระโดยไม่ต้องแก้ DNS หรือ config ใดๆ"
+
+**Owner decision update (2026-09-05)**: The project lead confirmed that the
+address identified in the project's institutional approval is authorized and
+required to operate as the web service's server. It is therefore a mandatory
+production origin, not merely an address to retain, a fallback-only tier, or an
+optional resource that an outbound provider tunnel may bypass. The same update
+sets a zero recurring-cost boundary for server setup and public naming; a paid
+`.com` registration is outside that boundary unless the owner later approves a
+budget amendment.
 
 ## Context
 
 Feature `001-local-3d-generation` delivers a working image-to-3D generation service that today is reachable only from the machine that runs it. Its public-deployment phase is gated at `evidence/public-deployment/owner-gate.md`.
 
-The previously planned public architecture placed a reverse proxy on the university-allocated public address and reached the GPU machine over a self-hosted point-to-point tunnel. That structure is retained. The university-allocated address remains the project's real origin, in keeping with the terms under which it was allocated.
+The previously planned public architecture placed a reverse proxy on the university-allocated public address and reached the GPU machine over a self-hosted point-to-point tunnel. That structure is retained. The university-allocated address remains the project's real origin, in keeping with the terms under which it was approved and with the project lead's explicit direction that it be used as this web service's server.
 
 What this feature adds is a Cloudflare-managed naming and proxy layer **in front of** that origin. Visitors resolve and connect to Cloudflare; Cloudflare connects to the allocated address. This is an addition to the public path, not a replacement for the allocated address.
 
@@ -24,7 +35,7 @@ The change is worth making for three concrete reasons, in descending order of pr
 
 The generation service itself is unchanged: no application code, no internal port bindings, no upload policy, and no job-authorization behavior is modified by this feature.
 
-**Not adopted**: routing production traffic through a provider-operated tunnel in place of the allocated address. It was evaluated and rejected — it would have left the allocation unused, which is not acceptable for this project.
+**Not adopted**: routing production traffic through a provider-operated tunnel in place of the allocated address. It was evaluated in feature `003-outbound-tunnel-entry` and is now superseded by the owner's explicit direction: the approved address must remain the real production origin. Installing connector software for evaluation does not change this decision and is not cutover evidence.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -151,14 +162,17 @@ The GPU machine is switched off, asleep, or without connectivity. A visitor open
 - **FR-026**: Every evidence artifact MUST mask network addresses, and MUST NOT record credentials, tokens, or passwords.
 - **FR-027**: Acceptance MUST be evidenced from outside the university network; verification performed from inside it MUST NOT be accepted as proof of external reachability.
 - **FR-028**: Any inbound network permission this design still requires MUST be verified by a positive test that proves traffic actually traverses it, not only by a negative test showing an absence of response — a closed path and a correctly silent one are otherwise indistinguishable.
-- **FR-029**: Because the published name and the account controlling it are held personally while the origin address is institutional, the project MUST record — in owner-visible documentation, not only in one person's memory — the domain registrar, the provider account identity, the renewal dates, and the procedure for transferring or reconstructing the naming layer. This MUST be sufficient for the research programme to restore public reachability without the original operator.
+- **FR-029**: Because the account controlling the provider configuration may be held personally while the origin address is institutional, the project MUST record — in owner-visible documentation, not only in one person's memory — the no-cost name issuer, delegation owner, provider account identity, delegation review or renewal conditions, and the procedure for transferring or reconstructing the naming layer. This MUST be sufficient for the research programme to restore public reachability without the original operator.
 - **FR-030**: The complete set of inbound permissions the design requires MUST be enumerated and confirmed in writing before any cutover step begins. Discovering a further required permission during cutover MUST be treated as a planning defect, not as a routine follow-up request.
+- **FR-031**: The address identified in the project's institutional approval MUST operate as the production web origin. The public application MUST NOT be rerouted around it through a provider-operated tunnel, and the address MUST NOT be reduced to a fallback-only or nominal role without a new written owner decision.
+- **FR-032**: Server software, public naming, proxying, and visitor-certificate service introduced by this feature MUST incur zero project-attributable recurring cost. Existing institutionally supplied host, network, power, and address allocation are treated as in-kind project resources, not newly purchased services.
+- **FR-033**: The published name MUST be obtainable and renewable without payment under the current budget. A paid registration, including a `.com` name, MUST NOT be adopted unless the owner records a later budget amendment. The exact no-cost hostname remains an operator input until its delegation is accepted and verified.
 
 ### Key Entities
 
 There are now three tiers in the public path, and keeping them distinct matters because each fails differently and each is owned by a different party.
 
-- **Public subdomain**: The single stable name at which the service is published. Personally owned; independent of where the GPU machine is.
+- **Public subdomain**: The single stable no-cost delegated name at which the service is published. Its exact issuer and label remain pending acceptance; it is independent of where the GPU machine is.
 - **Proxy layer**: Terminates the visitor-facing secure connection, manages that certificate, and forwards to the origin. Operated by the provider; not under project control.
 - **Origin**: The machine holding the university-allocated address. Runs the reverse proxy that routes by path, serves the unavailability notice, and forwards job credentials untouched. Accepts connections only from the proxy layer. Institutionally allocated; must stay powered and in place.
 - **Compute link**: The connection between the origin and the GPU machine, established outbound from the GPU machine so that no inbound reachability to it is ever required.
@@ -188,6 +202,9 @@ Availability is the product of the origin and the GPU machine both being up: the
 - **SC-013**: A person other than the operator can, using only project documentation, state where the domain is registered, which account controls it, when it renews, and how to restore public reachability if that account becomes unavailable.
 - **SC-014**: The origin certificate's issue date, expiry date, and renewal procedure are recorded in operator documentation and can be stated by someone who did not install it.
 - **SC-015**: From a machine on the same physical network as the GPU machine, the web entry port is refused — proving the internal binding is enforced by the machine itself and not merely hidden by whatever network it currently occupies.
+- **SC-016**: Acceptance evidence demonstrates that the provider reaches the application through the single approved production origin, while all recorded evidence masks the exact address.
+- **SC-017**: The provider account and naming arrangement show no project-attributable recurring charge, and the published hostname remains renewable without payment.
+- **SC-018**: No provider-operated tunnel can serve the production application while bypassing the approved origin, verified from the deployed routing record and an external request trace with sensitive network values masked.
 
 ## Assumptions
 
@@ -204,23 +221,28 @@ Availability is the product of the origin and the GPU machine both being up: the
   This is recorded as an **owner risk-acceptance decision**, not a verified-compliant determination. No geographic filtering is technically enforced yet — the stated scope currently describes intended audience, not an enforced boundary. If geographic enforcement is added later (e.g. Cloudflare country-level rules excluding South Korea, the EU, and the UK), that is separate follow-on work, not assumed complete by this decision. This project has not obtained a separate legal opinion or a commercial license from Tencent confirming the deployment is compliant. `evidence/public-deployment/owner-gate.md` MUST record this decision in these terms — the stated territory, the specific named overlap with South Korea, and that no technical enforcement exists yet — rather than as a compliance verification, so the evidence remains accurate to what was actually established.
 - Cloudflare is the chosen provider for the public naming and proxy layer, as directed by the owner. Vendor selection is treated as an input constraint, not an open design question.
 - **The edge machine at the allocated address remains part of the architecture.** Choosing a proxied origin means the origin still has to exist, stay powered, hold the allocated address, and run the reverse proxy. This feature narrows what must be opened to it and removes its public certificate burden; it does not remove the machine or the need for administrative access to it.
+- **The project lead has confirmed the approval scope.** For specification purposes, the institutional approval covers using the allocated address as the server for this web service, and using that address is mandatory. Runtime assignment, border-firewall state, and service reachability still require fresh cutover evidence; this decision does not mark those technical checks complete.
+- **The current budget is zero.** A no-cost delegated subdomain is acceptable; a `.com` name is not, because registration and renewal introduce a recurring charge. This is a budget constraint, not a technical limitation of the origin architecture.
 - **A link from the edge to the GPU machine is still required**, and it must be initiated outbound from the GPU machine to satisfy the mobility requirement (FR-016). Its mechanism is a plan-phase decision. Whatever is chosen, any inbound permission it needs at the origin counts under FR-030 and must be enumerated before cutover — this is precisely the class of requirement that was missed in the superseded planning round.
 - The provider's request-size limit on the owner's plan is assumed to exceed the service's own upload limit by a wide margin. This should be confirmed once during planning rather than assumed at cutover.
 - Placing a proxy in front of the origin introduces a third party into the request path for all public traffic, including uploaded images and generated models. This is accepted as the cost of the benefits listed in Context.
 
 ## Dependencies
 
-- **A domain and Cloudflare account held personally by the operator.** Recorded as the owner's decision under Constitution Principle IX. Two consequences follow and MUST be recorded in the owner gate rather than left implicit:
-  - The published address depends on one individual's registrar and provider accounts. If those lapse or become inaccessible, the service becomes unreachable and the research programme has no independent route to restore it. FR-029 exists to bound this.
-  - The allocated network address is institutional while the name in front of it is personal. Any handover, publication, or final report should state this split plainly so it is not discovered later.
+- **A no-cost delegated name and a Cloudflare account controlled by the operator.** The exact name issuer and accepted label remain operator inputs. Two consequences follow and MUST be recorded in the owner gate rather than left implicit:
+  - The published address depends on the delegation issuer and the provider account. If either withdraws the delegation or becomes inaccessible, the service becomes unreachable; FR-029 exists to bound this.
+  - The allocated network address is institutional while control of the naming/proxy configuration may remain personal. Any handover, publication, or final report should state this split plainly so it is not discovered later.
 - The existing generation service from feature `001-local-3d-generation`, running and healthy.
 - The owner-gate decisions recorded in `evidence/public-deployment/owner-gate.md`, which this feature updates rather than bypasses.
+- The institutional approval covering use of the allocated address as this web service's server, together with the project lead's written confirmation of that scope.
+- A no-cost published-name delegation compatible with the selected proxy path.
 - An external vantage point (mobile data or off-site host) for acceptance evidence.
 
 ## Out of Scope
 
 - Moving the web application off the GPU machine so that it stays available while that machine is off. That is a different availability tier and would change how API traffic flows; it is explicitly not attempted here.
-- Routing production traffic through a provider-operated tunnel instead of the allocated address. Evaluated and rejected — it would leave the allocation unused.
+- Routing production traffic through a provider-operated tunnel instead of the allocated address. Feature `003-outbound-tunnel-entry` records the explored alternative but is superseded and MUST NOT be used for implementation under the current owner decision.
+- Purchasing or renewing a `.com` name under the current zero budget. This may return to scope only through a recorded budget amendment.
 - Caching generated models at the proxy layer, or serving them from provider storage.
 - Migrating the naming layer to institutional ownership. Recorded as a known consequence of the ownership decision (FR-029), not scheduled here.
 - Any change to generation quality, model selection, job queuing, or the 3D viewer.

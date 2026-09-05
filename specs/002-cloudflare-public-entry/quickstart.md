@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Quickstart: Validating the Cloudflare Public Entry
 
 **Feature**: `002-cloudflare-public-entry` | **Date**: 2026-09-05
@@ -12,10 +14,11 @@ How to prove this feature works end to end. Implementation steps live in `tasks.
 
 | Gate | Detail |
 |---|---|
-| Owner gate updated | `evidence/public-deployment/owner-gate.md` records the mode and ownership decisions of 2026-09-05. The model-license and permitted-territory decision inherited from feature 001 is **still open** and still blocks public exposure. |
+| Owner gate updated | `evidence/public-deployment/owner-gate.md` records the 2026-09-05 decision that the approved address is the mandatory production origin and cannot be bypassed by a provider tunnel. The model-license and permitted-territory decision inherited from feature 001 is **still open** and still blocks public exposure. |
 | Inbound permissions confirmed **in writing** | `443/tcp` from provider ranges, `51820/udp` from any. Port 80 not requested. See [`contracts/port-policy.md`](./contracts/port-policy.md). Late discovery of a third permission is a planning defect (FR-030). |
 | Management path decided and proven | Port and source range chosen, listener running, access confirmed from that source — **before** default-deny is applied. |
-| Operator inputs supplied | Origin OS and version; domain name; confirmation the origin holds `161.200.90.4`; confirmation nothing else listens on 443. |
+| Operator inputs supplied | Origin OS and version; accepted no-cost delegated hostname; confirmation the origin holds `161.200.90.4`; confirmation nothing else listens on 443. |
+| Zero-cost evidence | The selected name is obtainable and renewable without payment, the provider account has no billable feature enabled, and no `.com` registration is part of the path (FR-032, FR-033). |
 | External vantage point | Mobile data or an off-campus host. Verification from inside the university network is not evidence (FR-027). |
 | Second host on the laptop's network | Needed for the SC-015 lockdown probe. Run it at least once on a network the laptop does not own — a hotspot or public Wi-Fi — since that is the case the scoping protects against. |
 | Constitution v1.2.0 in force | The residual-exposure clause governing a TLS-terminating proxy must be the amended version. Auditing against v1.1.0 would fail this design for a reason the owner has already resolved. |
@@ -24,7 +27,7 @@ How to prove this feature works end to end. Implementation steps live in `tasks.
 
 Provider-side first, so the origin is never briefly reachable in an unprotected state.
 
-1. **Provider**: add the zone, create the subdomain record **proxied**, set SSL mode **Full (strict)**, enable **Authenticated Origin Pulls**, issue an **Origin CA certificate**.
+1. **Provider**: after the no-cost name/delegation is accepted, add the zone, create the subdomain record **proxied** to the approved origin (never to a provider tunnel), set SSL mode **Full (strict)**, enable **Authenticated Origin Pulls**, and issue an **Origin CA certificate**.
 2. **Origin**: install the Origin CA certificate and key; configure the reverse proxy to require and verify the provider client certificate; no ACME, no port 80 listener.
 3. **Origin firewall**: apply the policy from `contracts/port-policy.md`. Confirm management access from a *new* connection before ending the session.
 4. **Laptop**: tunnel config with `/32` peer scope and keepalive; startup wrapper that waits for the tunnel address and a live handshake; recovery watchdog.
@@ -46,6 +49,7 @@ uv run --project apps/api pytest tests/security/test_caddy_contract.py -v
 |---|---|
 | `tests/security/test_caddy_contract.py` | Passes: **no `basic_auth` (preserved assertion, FR-023)**, no ACME directive, no `:80` listener, client-certificate verification present, credential deleted from logs, upstream is the tunnel address only, `161.200.90.3` absent from `deploy/**` |
 | Reverse-proxy config validation | Config parses and validates |
+| Cost boundary record | `evidence/public-deployment/cost-boundary.md` proves the name is a no-cost delegation and the provider path has no billable feature; no paid `.com` registration appears (SC-017) |
 
 ### Stage 2 — Boundary, from an external vantage point
 
@@ -61,6 +65,7 @@ uv run --project apps/api pytest tests/security/test_caddy_contract.py -v
 | Compute link — **positive** | same | Real peer handshakes, timestamp fresh, origin reaches `10.10.0.2:3000` |
 | Laptop boundary | `deploy/firewall/verify-upstream-boundary.ps1` | Port 3000 scoped to `10.10.0.1/32` on the tunnel interface; 8000, 8188, 3389 blocked |
 | Laptop refused from its own LAN | `scripts/verify/test_upstream_lan_lockdown.py` | Connection refused from a second host on the laptop's physical network (SC-015) |
+| Approved-origin path | masked provider routing export plus external request trace | Application traffic reaches the single approved production origin; no provider-operated tunnel bypass exists (SC-016, SC-018) |
 
 The positive compute-link check is the one that proves the UDP permission actually traverses the border firewall. A silent port and a blocked port look identical from outside, so the negative check alone proves nothing about the permission.
 

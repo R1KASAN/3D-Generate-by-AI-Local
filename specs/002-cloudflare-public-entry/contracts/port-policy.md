@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Contract: Inbound Port Policy
 
 **Feature**: `002-cloudflare-public-entry` | **Date**: 2026-09-05
@@ -15,6 +17,10 @@
 ---
 
 ## Origin `161.200.90.4` — inbound
+
+This is the mandatory production web origin under FR-031. The table does not
+describe a fallback-only tier, and no provider-operated tunnel may replace or
+bypass this origin under the current owner decision.
 
 | Port | Proto | Source scope | Purpose | Required? |
 |---|---|---|---|---|

@@ -1,6 +1,6 @@
-"""Probe the public edge's TCP ports from outside the university network (T092).
+"""Probe the public edge's ports from outside the university network.
 
-Confirms 443/80 are reachable and 3000/8000/8188/3389/2019 are not, from a
+Confirms 443 is reachable and 80/3000/8000/8188/3389/2019 are not, from a
 genuinely external vantage point. Never probes 161.200.90.3 - only the
 approved edge address may be targeted by anything in this repository.
 """
@@ -17,14 +17,30 @@ from _evidence import Check, mask_ip, overall_verdict, write_evidence  # noqa: E
 
 APPROVED_PUBLIC_ADDRESS = "161.200.90.4"
 
-EXPECTED_OPEN = {443: "HTTPS (Caddy)", 80: "ACME/redirect (Caddy)"}
+EXPECTED_OPEN = {443: "HTTPS (Caddy)"}
 EXPECTED_CLOSED = {
+    80: "HTTP (must not be reachable; provider performs redirect)",
     3000: "Next.js (must be reachable only via the WireGuard tunnel, never publicly)",
     8000: "FastAPI (loopback-only on the laptop, never on the edge)",
     8188: "ComfyUI (loopback-only on the laptop, never on the edge)",
     3389: "RDP (must never be reachable, on either box)",
     2019: "Caddy admin API (admin off)",
 }
+
+
+def _static_port_policy_check(config_path: Path) -> Check:
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return Check("origin-port-80-policy", f"config unreadable: {type(exc).__name__}", "no port-80 firewall rule or EnableHttp switch", "BLOCKED")
+    forbidden = ("EnableHttp", "Local3D Edge HTTP (ACME/redirect)")
+    found = [item for item in forbidden if item in text]
+    return Check(
+        "origin-port-80-policy",
+        f"forbidden markers: {', '.join(found) if found else 'none'}",
+        "no port-80 firewall rule or EnableHttp switch",
+        "FAIL" if found else "PASS",
+    )
 
 
 def _tcp_open(host: str, port: int, timeout: float = 5.0) -> bool:
@@ -40,6 +56,7 @@ def main() -> int:
     parser.add_argument("--public-address", required=True)
     parser.add_argument("--confirm-off-campus", action="store_true")
     parser.add_argument("--evidence", type=Path, default=Path("evidence/public-deployment/ports.md"))
+    parser.add_argument("--firewall-config", type=Path, default=Path("deploy/firewall/configure-public-edge.ps1"), help="authored firewall config used for the offline port-80 policy check")
     args = parser.parse_args()
 
     if args.public_address != APPROVED_PUBLIC_ADDRESS:
@@ -48,11 +65,14 @@ def main() -> int:
 
     if not args.confirm_off_campus:
         checks = [Check("vantage-point", "--confirm-off-campus was not supplied", "run from outside the university network", "BLOCKED")]
-        write_evidence(args.evidence, "External Port Exposure Evidence", "T092", [f"- Edge address (masked): {mask_ip(args.public_address)}"], checks, "BLOCKED")
+        write_evidence(args.evidence, "External Port Exposure Evidence", "T025", [f"- Edge address (masked): {mask_ip(args.public_address)}"], checks, "BLOCKED")
         print(f"BLOCKED: port evidence written to {args.evidence}")
         return 1
 
-    checks = [Check("vantage-point", "operator attested off-campus", "run from outside the university network", "PASS")]
+    checks = [
+        Check("vantage-point", "operator attested off-campus", "run from outside the university network", "PASS"),
+        _static_port_policy_check(args.firewall_config),
+    ]
 
     for port, label in EXPECTED_OPEN.items():
         open_state = _tcp_open(args.public_address, port)
@@ -66,7 +86,7 @@ def main() -> int:
     write_evidence(
         args.evidence,
         "External Port Exposure Evidence",
-        "T092",
+        "T025",
         [f"- Edge address (masked): {mask_ip(args.public_address)}"],
         checks,
         verdict,

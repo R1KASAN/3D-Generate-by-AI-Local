@@ -2,7 +2,7 @@
 
 **Feature**: `003-outbound-tunnel-entry` | **Date**: 2026-09-06
 
-Replaces feature 002's inbound origin-entry contract. The public entry is now outbound-initiated, so the origin has **no listening socket reachable from the Internet**.
+Replaces feature 002's inbound origin-entry contract. The public application entry is now outbound-initiated, so the origin has **no Internet-facing application or management listener**. The compute-link contract permits one narrowly scoped WireGuard UDP transport listener; it is not part of the public application entry and cannot expose any project service.
 
 ---
 
@@ -20,7 +20,8 @@ Internet ──> provider edge ──> outbound tunnel ──> cloudflared (orig
 
 | Property | Value | Requirement |
 |---|---|---|
-| Inbound public ports | **none** | FR-003, FR-004 |
+| Inbound public application/management ports | **none** | FR-003, FR-004 |
+| Private-link transport | Narrowly scoped WireGuard UDP listener only | Compute-link C1a |
 | `cloudflared` → proxy | loopback only | FR-004 |
 | Proxy listen address | `127.0.0.1` | FR-004 |
 | Proxy upstream | GPU laptop over the private binding | FR-014 |
@@ -82,7 +83,7 @@ An edge-hosted maintenance page is forbidden: it would serve public traffic with
 |---|---|
 | Storage | Outside Git, least-privilege file permissions (FR-032) |
 | Rotation | Documented revocation and replacement procedure |
-| Verification | Revoking the active credential stops traffic; the replacement restores the same hostname without exposing an inbound service (SC-013) |
+| Verification | Revoking the active credential stops traffic; the replacement restores the same hostname without exposing any direct Internet-facing application or management listener (SC-013). The narrowly scoped WireGuard UDP transport listener defined by the Option A compute-link contract (C1a) is explicitly excluded from this prohibition. |
 
 ## O7 — Startup
 
@@ -105,3 +106,7 @@ If zrok carries production under FR-011d, this contract is unchanged except:
 | TLS-termination disclosure | names Cloudflare | names zrok |
 
 Running the fallback connector on the GPU laptop, or pointing it at the laptop directly, is forbidden (FR-011e).
+
+## Implementation terminology (2026-09-06)
+
+The primary component name is **origin pass-through** (Caddy on the approved origin). The **connector** is cloudflared or the cause-gated zrok replacement. The laptop-facing application role is **job service**. Historical feature-002 web-entry/proxy terminology in superseded records does not change these roles.

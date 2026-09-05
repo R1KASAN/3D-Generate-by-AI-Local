@@ -1,4 +1,4 @@
-# External-Network Full-Flow Acceptance Checklist (T093)
+# External-Network Full-Flow Acceptance Checklist (feature-002 T026)
 
 Run from a genuinely external vantage point (mobile data, home network, or
 an off-campus VPS) — never from inside the university network. Automated

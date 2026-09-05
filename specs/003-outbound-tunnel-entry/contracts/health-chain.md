@@ -80,4 +80,4 @@ Layer 3 failing must degrade layers 1–2 to "public path down" while leaving la
 | SC-006d | Origin down + binding absent → LAN fully usable; no service bound exclusively to the private address |
 | SC-006e | Binding returns → public path resumes without restarting the application |
 | SC-008 | Engine / binding / job service down separately → project-controlled page ≤5s |
-| SC-008a | Origin powered down → provider error; no inbound path; auto-resume |
+| SC-008a | Origin powered down → provider error; no direct Internet-facing application or management listener reachable (the C1a WireGuard transport listener is excluded from that prohibition); auto-resume |

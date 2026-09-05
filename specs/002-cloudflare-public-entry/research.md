@@ -1,3 +1,5 @@
+> **Superseded by [feature 003](../003-outbound-tunnel-entry/spec.md).** This artifact preserves feature-002 history; its inbound-proxy, certificate, and tunnel-gated startup instructions are not current deployment instructions. Consult `specs/003-outbound-tunnel-entry/` from the repository root.
+
 # Phase 0 Research: Cloudflare Public Entry
 
 **Feature**: `002-cloudflare-public-entry` | **Date**: 2026-09-05
@@ -82,6 +84,13 @@ Using a literal in a configuration file avoids this: the address is known to the
 - *A DNS-only subdomain such as `tunnel.<zone>`*: convenient, and publishes the origin. Rejected.
 - *Routing the compute link through the provider's tunnel product instead*: rejected at the spec level — the owner requires the allocated address to remain the production origin.
 
+**Owner reaffirmation (2026-09-05)**: Feature 003 later explored using
+provider-operated outbound connectors for both tiers, with the allocated address
+reduced to a fallback notice role. The project lead rejected that interpretation
+and confirmed the approval requires the allocated address itself to operate as
+the production web server. The alternative is therefore superseded, not a
+second supported deployment mode.
+
 ---
 
 ## R6 — Compute link protocol unchanged; inbound UDP is still required
@@ -128,5 +137,5 @@ Using a literal in a configuration file avoids this: the address is known to the
 |---|---|---|
 | Network staff refuse inbound UDP for the compute link | Mobility requirement unmet; laptop tethered to the origin's network | R6 fallbacks: SSH reverse tunnel, or mesh VPN with relays. Escalate before cutover, not during. |
 | Provider address ranges change and the origin's allowlist is stale | Legitimate traffic refused — visible outage | Accepted direction of failure (R3). mTLS keeps the security property intact; a scheduled range refresh limits the outage window. |
-| Naming layer is personally owned while the origin is institutional | Programme cannot restore reachability without the operator | FR-029 / `docs/operations/naming-continuity.md`; verified by SC-013. |
+| No-cost naming delegation and provider control may depend on one operator while the origin is institutional | Programme cannot restore reachability without the operator or may lose the delegated label | FR-029/FR-033 / `docs/operations/naming-continuity.md`; verified by SC-013 and SC-017. |
 | Origin machine is a single point of failure | Origin down takes the whole service down, unlike the laptop which degrades to a notice | Stated plainly in `data-model.md`; not mitigated in this feature. |
