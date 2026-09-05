@@ -30,11 +30,11 @@ Split-host deployment layer over an existing web application. Paths per [plan.md
 
 **Purpose**: Scaffolding for the outbound connector, with no behavior change yet
 
-- [ ] T001 Create `deploy/cloudflared/` directory structure with `services/` subdirectory for provisional per-OS unit definitions
-- [ ] T002 [P] Write `deploy/cloudflared/config.yml.example` with ingress to the loopback pass-through, no credentials, and a comment block naming the required environment values
-- [ ] T003 [P] Write `deploy/cloudflared/README.md` covering credential storage outside Git, least-privilege file permissions, and the revocation/replacement procedure per FR-032 and contracts/origin-entry.md O6
-- [ ] T004 [P] Add `.gitignore` entries for `deploy/cloudflared/*.json`, `deploy/cloudflared/cert.pem`, and any rendered `config.yml` so connector credentials cannot be committed
-- [ ] T005 [P] Record the origin-OS-unknown constraint in `deploy/cloudflared/services/README.md`, stating that unit definitions stay provisional until physical inspection per research.md R1
+- [X] T001 Create `deploy/cloudflared/` directory structure with `services/` subdirectory for provisional per-OS unit definitions
+- [X] T002 [P] Write `deploy/cloudflared/config.yml.example` with ingress to the loopback pass-through, no credentials, and a comment block naming the required environment values
+- [X] T003 [P] Write `deploy/cloudflared/README.md` covering credential storage outside Git, least-privilege file permissions, and the revocation/replacement procedure per FR-032 and contracts/origin-entry.md O6
+- [X] T004 [P] Add `.gitignore` entries for `deploy/cloudflared/*.json`, `deploy/cloudflared/cert.pem`, and any rendered `config.yml` so connector credentials cannot be committed
+- [X] T005 [P] Record the origin-OS-unknown constraint in `deploy/cloudflared/services/README.md`, stating that unit definitions stay provisional until physical inspection per research.md R1
 
 ---
 
@@ -46,20 +46,20 @@ Split-host deployment layer over an existing web application. Paths per [plan.md
 
 ### Tests first
 
-- [ ] T006 [P] Extend `tests/security/test_compute_link_startup.py` to assert no feature 001 service declares a WireGuard service dependency and none binds the private address exclusively (FR-023d) — must FAIL before T009/T010
-- [ ] T007 [P] Extend `tests/security/test_caddy_contract.py` to assert the Caddyfile has no public `:443` listener, no `tls`/`client_auth` block, and no Origin CA or client-CA path references (contracts/origin-entry.md O2) — must FAIL before T011
-- [ ] T008 [P] Extend `tests/security/test_caddy_contract.py` to assert **absence** of `buffer_requests` and `buffer_responses`, and presence of a body-size guard above 10 MiB (FR-014a, FR-031 request-size element, contracts/origin-entry.md O3) — must FAIL before T011
+- [X] T006 [P] Extend `tests/security/test_compute_link_startup.py` to assert no feature 001 service declares a WireGuard service dependency and none binds the private address exclusively (FR-023d) — must FAIL before T009/T010
+- [X] T007 [P] Extend `tests/security/test_caddy_contract.py` to assert the Caddyfile has no public `:443` listener, no `tls`/`client_auth` block, and no Origin CA or client-CA path references (contracts/origin-entry.md O2) — must FAIL before T011
+- [X] T008 [P] Extend `tests/security/test_caddy_contract.py` to assert **absence** of `buffer_requests` and `buffer_responses`, and presence of a body-size guard above 10 MiB (FR-014a, FR-031 request-size element, contracts/origin-entry.md O3) — must FAIL before T011
 
 ### Implementation
 
-- [ ] T009 Rewrite `deploy/windows/services/web.xml` to bind loopback, remove `-TunnelAddress`/`-EdgeTunnelAddress`/`-WireGuardInterface` arguments, and delete `<depend>WireGuardTunnel$upstream</depend>` per contracts/compute-link.md C4
-- [ ] T010 Rewrite `scripts/windows/start_web_service.ps1` to start Next.js on `127.0.0.1:3000` unconditionally, removing the tunnel-address and handshake polling that currently gates startup
-- [ ] T011 Rewrite `deploy/caddy/Caddyfile` for loopback-only listening: delete the `{$PUBLIC_HOSTNAME}` public block's TLS and client-auth config, delete the `:443` host-guard block, keep security headers, log redaction, body guard, streaming defaults, and the `handle_errors` maintenance path
-- [ ] T012 Update `deploy/caddy/.env.example` to remove `ORIGIN_CERT_PATH`, `ORIGIN_KEY_PATH`, and `ORIGIN_PULL_CA_PATH`, and to document the loopback listen address and the private-binding upstream, confirming the origin retains no operator-managed certificate secret or renewal duty (FR-006, FR-014)
-- [ ] T013 [P] Verify `deploy/windows/services/api.xml` and `deploy/windows/services/comfyui.xml` bind loopback only and declare no WireGuard dependency; record findings in `evidence/public-deployment/service-bindings.md`
-- [ ] T014 Add asynchronous bounded-backoff reconnect for the private binding in `scripts/windows/` that never blocks application startup (FR-023d, contracts/compute-link.md C4)
-- [ ] T015 Confirm the LAN host port forward in `scripts/windows/configure_lan_boundary.ps1` still targets `127.0.0.1:3000` after the binding change, and that the origin reaches the same listener via `10.10.0.2`
-- [ ] T016 Run T006–T008 and confirm they now PASS
+- [X] T009 Rewrite `deploy/windows/services/web.xml` to bind loopback, remove `-TunnelAddress`/`-EdgeTunnelAddress`/`-WireGuardInterface` arguments, and delete `<depend>WireGuardTunnel$upstream</depend>` per contracts/compute-link.md C4
+- [X] T010 Rewrite `scripts/windows/start_web_service.ps1` to start Next.js on `127.0.0.1:3000` unconditionally, removing the tunnel-address and handshake polling that currently gates startup
+- [X] T011 Rewrite `deploy/caddy/Caddyfile` for loopback-only listening: delete the `{$PUBLIC_HOSTNAME}` public block's TLS and client-auth config, delete the `:443` host-guard block, keep security headers, log redaction, body guard, streaming defaults, and the `handle_errors` maintenance path
+- [X] T012 Update `deploy/caddy/.env.example` to remove `ORIGIN_CERT_PATH`, `ORIGIN_KEY_PATH`, and `ORIGIN_PULL_CA_PATH`, and to document the loopback listen address and the private-binding upstream, confirming the origin retains no operator-managed certificate secret or renewal duty (FR-006, FR-014)
+- [X] T013 [P] Verify `deploy/windows/services/api.xml` and `deploy/windows/services/comfyui.xml` bind loopback only and declare no WireGuard dependency; record findings in `evidence/public-deployment/service-bindings.md`
+- [X] T014 Add asynchronous bounded-backoff reconnect for the private binding in `scripts/windows/` that never blocks application startup (FR-023d, contracts/compute-link.md C4)
+- [X] T015 Confirm the LAN host port forward in `scripts/windows/configure_lan_boundary.ps1` still targets `127.0.0.1:3000` after the binding change, and that the origin reaches the same listener via `10.10.0.2`
+- [X] T016 Run T006–T008 and confirm they now PASS
 
 **Checkpoint**: The GPU laptop starts feature 001 without WireGuard, and the origin proxy has no inbound listener. User story work can begin.
 

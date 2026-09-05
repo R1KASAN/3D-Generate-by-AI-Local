@@ -14,13 +14,24 @@ param(
     [switch]$OwnerApproved
 )
 
-# Laptop-side network boundary for the mobile-GPU public deployment (T088).
+# Laptop-side network boundary for the mobile-GPU public deployment (T051,
+# revised for feature 003 in specs/003-outbound-tunnel-entry).
 #
 # This is the mirror image of scripts/windows/configure_lan_boundary.ps1:
 # that script proves an address is PRIVATE before exposing it on the LAN;
 # this one proves the laptop does NOT hold a public IP (it must stay behind
 # NAT, reachable only through the WireGuard tunnel) before opening anything.
 # Every refusal below runs before any change is made (fail closed).
+#
+# Feature 002 -> feature 003 change: Next.js used to bind the tunnel address
+# (10.10.0.2) directly, so this script only had to open a firewall rule -
+# the listening socket already existed at the right address. Feature 003's
+# LAN-independence fix (contracts/compute-link.md C4) moved the web service
+# to a loopback-only bind so it starts without waiting on WireGuard; the
+# tunnel address now needs an explicit port-forward to reach it, the same
+# mechanism scripts/windows/configure_lan_boundary.ps1 already uses for LAN
+# clients. This script now manages that portproxy entry as well as the
+# firewall rule - it no longer refuses to run because one exists.
 
 $ErrorActionPreference = 'Stop'
 $ruleName = 'Local3D Upstream Entry'
@@ -82,10 +93,16 @@ if ($publicAddresses) {
     throw "This machine holds a public IPv4 address ($list). The mobile-laptop topology requires this machine to stay behind NAT, reachable only via the WireGuard tunnel. Refusing to configure the upstream boundary - check whether this script is being run on the edge server by mistake."
 }
 
-# --- 5. No stale portproxy entries ---
-$proxyText = ((& netsh interface portproxy show v4tov4) -join "`n").Trim()
-if ($proxyText -and $proxyText -notmatch '^\s*$' -and $proxyText -notmatch 'Listen on ipv4:\s*Connect to ipv4:\s*Address\s+Port\s+Address\s+Port\s*-+\s+-+\s+-+\s+-+\s*$') {
-    throw "A netsh portproxy entry is still configured. Remove it first (see docs/operations/lan-proxy-repair.md) - this deployment does not use portproxy and a stale entry can silently reopen a port on a network this laptop rejoins later.`n$proxyText"
+# --- 5. Any existing portproxy entry must be exactly the expected mapping,
+#        or absent - never a stale mapping to something else ---
+$proxyText = (& netsh interface portproxy show v4tov4) -join "`n"
+$escapedTunnel = [regex]::Escape($TunnelAddress)
+$exactProxy = $proxyText -match "(?m)^\s*$escapedTunnel\s+$WebPort\s+127\.0\.0\.1\s+$WebPort\s*$"
+if (-not $exactProxy) {
+    $stalePattern = "(?m)^\s*$escapedTunnel\s+$WebPort\s+"
+    if ($proxyText -match $stalePattern) {
+        & netsh interface portproxy delete v4tov4 listenaddress=$TunnelAddress listenport=$WebPort protocol=tcp | Out-Null
+    }
 }
 
 # --- 6. 8000/8188 must be loopback-only before 3000 is opened (fail closed) ---
@@ -109,6 +126,18 @@ if ($rdpDenied -ne 1) {
 # ---------------------------------------------------------------------------
 
 Set-NetFirewallProfile -All -Enabled True -DefaultInboundAction Block -DefaultOutboundAction Allow -ErrorAction Stop
+
+# Forward the tunnel address to the web service's loopback listener. Next.js
+# no longer binds $TunnelAddress directly (feature 003) - this portproxy
+# entry is what makes traffic arriving over the private WireGuard binding
+# still reach it, the same way configure_lan_boundary.ps1 does for LAN
+# clients.
+if (-not $exactProxy) {
+    & netsh interface portproxy add v4tov4 listenaddress=$TunnelAddress listenport=$WebPort connectaddress=127.0.0.1 connectport=$WebPort protocol=tcp | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw 'Failed to create the tunnel-to-loopback web proxy.'
+    }
+}
 
 Get-NetFirewallRule -DisplayName $staleLanRuleName -ErrorAction SilentlyContinue |
     Remove-NetFirewallRule -ErrorAction SilentlyContinue
@@ -145,6 +174,6 @@ foreach ($blockedPort in 8000, 8188, 3389) {
         -LocalPort $blockedPort | Out-Null
 }
 
-Write-Output "Configured upstream entry: TCP ${TunnelAddress}:${WebPort} <- ${EdgePeer} only."
+Write-Output "Configured upstream entry: TCP ${TunnelAddress}:${WebPort} <- ${EdgePeer} only, forwarded to 127.0.0.1:${WebPort}."
 Write-Output 'Ports 8000 and 8188 remain loopback-only and are also explicitly blocked inbound.'
 Write-Output 'RDP (3389) remains disabled and is also explicitly blocked inbound.'

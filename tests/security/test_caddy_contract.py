@@ -1,14 +1,25 @@
-"""Static contract tests for deploy/caddy/Caddyfile (T086).
+"""Static contract tests for deploy/caddy/Caddyfile (feature 003).
+
+Feature 003 replaces feature 002's inbound origin proxy (public :443
+listener, Origin CA certificate, Authenticated Origin Pulls / mTLS) with an
+outbound Cloudflare Tunnel connector. Caddy's role shrinks to a stateless,
+loopback-only streaming pass-through between the connector and the GPU
+laptop - see specs/003-outbound-tunnel-entry/contracts/origin-entry.md.
 
 These tests never start Caddy or touch the network - they parse the
-Caddyfile text and assert the owner-approved public-entry policy is
-encoded correctly, before any of it is ever deployed:
+Caddyfile text and assert:
 
-  - no site-wide login (basic_auth) - the approved policy is per-job
-    capability tokens only, never a shared credential
+  - no public listener of any kind (no :443/:80 site block, no TLS/mTLS
+    config, no Origin CA or client-CA file references) - cloudflared alone
+    owns the provider-facing hop now
+  - the listener is loopback-only
+  - no site-wide login (basic_auth) - the requested policy is per-job
+    capability tokens only
   - the only upstream is the WireGuard tunnel address to the GPU laptop,
     never 0.0.0.0/::, never ComfyUI's port (:8188) directly
-  - X-Job-Token is stripped from the access log, or it leaks in cleartext
+  - request and response bodies are streamed, never buffered to disk
+    (FR-014a) - buffer_requests/buffer_responses must be absent
+  - X-Job-Token/Cookie/Authorization are stripped from the access log
   - a maintenance page is served when the upstream is unreachable
   - 161.200.90.3 never appears in deployment configuration (see the
     project's hard constraint: only .4 may ever be configured)
@@ -30,7 +41,7 @@ CADDYFILE = REPO_ROOT / "deploy" / "caddy" / "Caddyfile"
 
 # Scope for the "never .3" check: deployment configuration and network
 # scripts, not documentation or evidence, which must be free to explain
-# why .3 is off-limits. See the plan's ⛔ constraint table.
+# why .3 is off-limits.
 FORBIDDEN_IP_SCAN_PATHS = [
     REPO_ROOT / "deploy",
     REPO_ROOT / "scripts" / "windows" / "start_web_service.ps1",
@@ -41,21 +52,14 @@ FORBIDDEN_IP = "161.200.90.3"
 
 def _read_caddyfile() -> str:
     if not CADDYFILE.exists():
-        pytest.fail(
-            f"{CADDYFILE} does not exist yet. This test is written test-first "
-            "per T086 and is expected to fail until deploy/caddy/Caddyfile is created."
-        )
+        pytest.fail(f"{CADDYFILE} does not exist.")
     return CADDYFILE.read_text(encoding="utf-8")
 
 
 def _directives_only(text: str) -> str:
     """Strip full-line comments (leading '#') so directive-focused checks
-    aren't tripped up by explanatory prose that legitimately names things
-    like "basic_auth" or an IP address for documentation purposes. Only
-    used by checks about actual Caddy directives; the forbidden-IP scan
-    intentionally does NOT use this - that check must catch a bare address
-    anywhere in deploy/, comments included, per the project's hard
-    constraint on 161.200.90.3."""
+    aren't tripped up by explanatory prose. Only used by checks about actual
+    Caddy directives; the forbidden-IP scan intentionally does NOT use this."""
     return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
 
 
@@ -63,9 +67,46 @@ def test_no_basic_auth() -> None:
     text = _directives_only(_read_caddyfile())
     assert not re.search(r"\bbasic_?auth\b", text, re.IGNORECASE), (
         "Caddyfile must not configure a site-wide login (basic_auth) as an "
-        "active directive. The owner-approved policy is per-job capability "
+        "active directive. The requested policy is per-job capability "
         "tokens only."
     )
+
+
+def test_no_public_listener() -> None:
+    """FR-003/FR-004: the origin has no inbound public port at all. Only
+    cloudflared dials out; Caddy never listens on :443 or :80."""
+    text = _directives_only(_read_caddyfile())
+    assert not re.search(r"(?m)^\s*:443\b", text), "The origin must not listen on :443 - there is no inbound port."
+    assert not re.search(r"(?m)^\s*:80\b", text), "The origin must not listen on :80."
+    assert "{$PUBLIC_HOSTNAME}" not in text, (
+        "The Caddyfile must not key a site block on the public hostname - "
+        "that hostname is resolved by the provider edge, not by this loopback proxy."
+    )
+
+
+def test_no_tls_or_client_certificate_config() -> None:
+    """There is no provider-to-origin TLS hop for this process to
+    authenticate anymore: cloudflared's outbound connection owns that.
+    Feature 002's Origin CA + Authenticated Origin Pulls (mTLS) are removed,
+    not reconfigured."""
+    text = _directives_only(_read_caddyfile())
+    assert not re.search(r"(?m)^\s*tls\b", text, re.IGNORECASE), "Caddy must not configure a tls block."
+    assert "client_auth" not in text, "Caddy must not require a client certificate; there is no inbound TLS hop."
+    assert "require_and_verify" not in text
+    assert "trusted_ca_cert_file" not in text
+    for forbidden in ("ORIGIN_CERT_PATH", "ORIGIN_KEY_PATH", "ORIGIN_PULL_CA_PATH"):
+        assert forbidden not in text, f"{forbidden} is a feature-002 artifact and must not appear."
+    assert not re.search(r"(?m)^\s*acme(?:\s|$)", text, re.IGNORECASE)
+    assert not re.search(r"(?m)^\s*email\s+", text)
+
+
+def test_listener_is_loopback_only() -> None:
+    """FR-004: the pass-through must not be reachable from any interface
+    other than loopback - cloudflared is the only process that reaches it."""
+    text = _directives_only(_read_caddyfile())
+    assert re.search(r"127\.0\.0\.1", text), "Caddyfile must bind an explicit loopback address."
+    assert "0.0.0.0" not in text
+    assert not re.search(r"(?<!127\.0\.0\.)1\b::(?!\w)", text)
 
 
 def test_upstream_is_tunnel_address_only() -> None:
@@ -81,19 +122,30 @@ def test_upstream_is_tunnel_address_only() -> None:
         assert forbidden not in directives, f"Caddyfile must never reference {forbidden!r} as an upstream directive."
 
 
-def test_no_hardcoded_hostname_or_ip_literal() -> None:
+def test_no_hardcoded_approved_address_literal() -> None:
     raw = _read_caddyfile()
     directives = _directives_only(raw)
-    assert "{$PUBLIC_HOSTNAME}" in raw, "The site block must use {$PUBLIC_HOSTNAME}, not a literal hostname."
-    # No IPv4 literal should appear as an active directive (the catch-all
-    # block legitimately uses bare :443/:80, which is fine - it has no host
-    # part). Explanatory comments may still name the approved address for
-    # documentation purposes.
     ipv4_literal = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
-    assert not ipv4_literal.search(directives), (
-        "Caddyfile must not use any literal IPv4 address as an active directive, "
-        "including the approved edge address - it must always be reached via "
-        "{$PUBLIC_HOSTNAME} / DNS, never hardcoded in a directive."
+    for match in ipv4_literal.finditer(directives):
+        assert match.group(0).startswith("127.0.0."), (
+            f"Unexpected IPv4 literal {match.group(0)!r} as an active directive; "
+            "only the loopback listen address may be a literal."
+        )
+
+
+def test_streaming_pass_through_no_buffering() -> None:
+    """FR-014a: request and response bodies must be streamed. Caddy's
+    reverse_proxy streams by default; buffer_requests/buffer_responses
+    would defeat that and must never be added."""
+    text = _directives_only(_read_caddyfile())
+    assert "buffer_requests" not in text, (
+        "buffer_requests would spool the full request body to memory/disk "
+        "before forwarding it, violating the streaming pass-through requirement."
+    )
+    assert "buffer_responses" not in text, (
+        "buffer_responses would spool the full response (including generated "
+        "artifacts) before returning it, adding latency and a temp-file "
+        "footprint the origin must not have."
     )
 
 
@@ -106,7 +158,8 @@ def test_request_body_max_size_within_policy() -> None:
         f"max_size is {value}{match.group(2)}; must stay in [10, 16] MiB. "
         "It must be looser than the API's 10 MiB policy (to avoid rejecting "
         "legal uploads due to multipart framing overhead) but still act as "
-        "an absurdity guard, not a de facto unlimited size."
+        "an absurdity guard, not a de facto unlimited size. This limit MUST "
+        "be enforced during the stream, not after buffering the full body."
     )
 
 
@@ -116,7 +169,6 @@ def test_job_token_never_rewritten_or_stripped_from_request() -> None:
         "If X-Job-Token is referenced outside of the log-redaction block, "
         "confirm manually it is not being altered on the request path."
     )
-    # No header_up directive should touch X-Job-Token.
     assert not re.search(r"header_up\s+[-+]?X-Job-Token", text, re.IGNORECASE), (
         "Caddyfile must not add, remove, or rewrite the X-Job-Token request header."
     )
@@ -132,7 +184,7 @@ def test_job_token_deleted_from_access_log() -> None:
         "The log block must delete request>headers>X-Job-Token. Caddy's built-in "
         "redaction only covers Authorization/Cookie - X-Job-Token would otherwise "
         "be written to the access log in cleartext, violating the no-token-in-logs "
-        "requirement (T091)."
+        "requirement (FR-017)."
     )
 
 
@@ -171,13 +223,4 @@ def test_forbidden_ip_absent_from_deployment_config() -> None:
     assert not offenders, (
         f"{FORBIDDEN_IP} must never appear in deployment configuration or network "
         f"scripts. Found it in: {', '.join(offenders)}"
-    )
-
-
-def test_no_http_block_written_by_hand() -> None:
-    text = _read_caddyfile()
-    assert not re.search(r"(?m)^\s*http://", text), (
-        "Do not hand-write an http:// block - Caddy's automatic HTTPS already "
-        "redirects HTTP to HTTPS and serves the ACME HTTP-01 challenge; a "
-        "hand-written block risks shadowing the challenge handler."
     )

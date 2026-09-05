@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$TunnelAddress = '10.10.0.2',
     [string]$EdgeTunnelAddress = '10.10.0.1',
+    [string]$WebListenAddress = '127.0.0.1',
     [ValidateRange(1, 65535)][int]$WebPort = 3000,
     [string]$WireGuardServiceName = 'WireGuardTunnel$upstream',
     [string]$WebServiceName = 'Local3D-Web',
@@ -10,19 +10,26 @@ param(
     [int]$MaxRestartsBeforeAlert = 3
 )
 
-# Recovery watchdog for the laptop-side tunnel + web service, run every 5
-# minutes as a Scheduled Task.
+# Recovery watchdog for the laptop-side private binding + web service, run
+# every 5 minutes as a Scheduled Task. This is the asynchronous,
+# bounded-backoff reconnect for the private binding required by FR-023d and
+# contracts/compute-link.md C4/C5 - it runs independently of and never
+# blocks the web service's own startup (see start_web_service.ps1, which no
+# longer waits on WireGuard at all).
 #
 # This deliberately diagnoses BEFORE it acts. WireGuard failing and Next.js
 # failing are different problems at different layers, and restarting the
-# wrong layer does not fix anything - restarting Local3D-Web while the
-# tunnel itself is down just produces a service that dies again on bind,
-# repeatedly, without ever addressing the real fault. See the plan's
-# decision tree:
+# wrong layer does not fix anything. See the decision tree:
 #
 #   WG handshake stale        -> restart the WireGuard tunnel service only
 #   WG healthy, web not up    -> restart Local3D-Web only
 #   both healthy              -> do nothing
+#
+# Feature 003 change: the web service now binds loopback unconditionally
+# (it no longer binds the WireGuard tunnel address), so "is the web service
+# up" is checked on 127.0.0.1, not on the tunnel address. WireGuard being
+# down no longer implies the web service is down - they are independent
+# conditions now, which is the whole point of the LAN-independence fix.
 #
 # A cooldown and an escalating-failure cutoff prevent an unbounded restart
 # loop: if the same layer needed a restart more than $MaxRestartsBeforeAlert
@@ -104,19 +111,20 @@ if ([int]$state.WireGuardRestartCount -ne 0) {
     Save-State $state
 }
 
-# --- Layer 2: tunnel is fine, is the web service actually listening? ---
-$webListening = [bool](Get-NetTCPConnection -State Listen -LocalAddress $TunnelAddress -LocalPort $WebPort -ErrorAction SilentlyContinue)
+# --- Layer 2: is the web service actually listening? (checked on loopback -
+#     it starts independently of tunnel health, per FR-023a/FR-023d) ---
+$webListening = [bool](Get-NetTCPConnection -State Listen -LocalAddress $WebListenAddress -LocalPort $WebPort -ErrorAction SilentlyContinue)
 
 if (-not $webListening) {
     if ($state.WebRestartCount -ge $MaxRestartsBeforeAlert) {
-        Write-Log 'ERROR' "Local3D-Web is not listening on ${TunnelAddress}:${WebPort} and restart limit ($MaxRestartsBeforeAlert) already reached. NOT restarting again - investigate manually (check the service's own logs, not just this watchdog's)."
+        Write-Log 'ERROR' "Local3D-Web is not listening on ${WebListenAddress}:${WebPort} and restart limit ($MaxRestartsBeforeAlert) already reached. NOT restarting again - investigate manually (check the service's own logs, not just this watchdog's)."
         exit 1
     }
     if (-not (Test-CooldownElapsed $state.WebLastRestart)) {
         Write-Log 'WARN' "Local3D-Web not listening but within the $CooldownMinutes-minute cooldown of its last restart. Waiting."
         exit 0
     }
-    Write-Log 'WARN' "Tunnel is healthy but Local3D-Web is not listening on ${TunnelAddress}:${WebPort}. Restarting the web service - the fault is at the app layer, not the tunnel."
+    Write-Log 'WARN' "Local3D-Web is not listening on ${WebListenAddress}:${WebPort}. Restarting the web service. (Tunnel health, checked above, is independent of this - restarting one never restarts the other.)"
     try {
         Restart-Service -Name $WebServiceName -Force -ErrorAction Stop
         $state.WebRestartCount = [int]$state.WebRestartCount + 1

@@ -1,80 +1,35 @@
 [CmdletBinding()]
 param(
-    [string]$TunnelAddress = '10.10.0.2',
-    [string]$EdgeTunnelAddress = '10.10.0.1',
-    [ValidateRange(1, 65535)][int]$Port = 3000,
-    [ValidateRange(1, 3600)][int]$MaxWaitSeconds = 300
+    [ValidateRange(1, 65535)][int]$Port = 3000
 )
 
-# Waits for the WireGuard tunnel to be up before starting Next.js.
+# Starts Next.js on loopback, unconditionally.
 #
-# web.xml binds Next.js to the tunnel address (10.10.0.2), not loopback.
-# If Windows starts this service before the WireGuard tunnel interface has
-# created that address, `next start --hostname 10.10.0.2` fails to bind and
-# the service dies. A WinSW <depend> on the WireGuard tunnel service reduces
-# the race but does not eliminate it - the tunnel service can report
-# "started" before the interface address and a live handshake with the edge
-# are actually in place. This script closes that gap the same way
-# start_api_service.ps1 closes it for ComfyUI: poll for the real condition,
-# not just "the dependency's service object exists".
+# Feature 002 bound this service to the WireGuard tunnel address and made it
+# wait for a live handshake before starting, because under that architecture
+# the tunnel address WAS this service's public bind address. Feature 003
+# moves the public entry to the approved origin (see
+# specs/003-outbound-tunnel-entry/contracts/compute-link.md C4), so that
+# wait is now a regression: if WireGuard is down when this service starts,
+# waiting for it would take the LAN-only workflow down too, violating
+# FR-023a/FR-023d/FR-037.
 #
-# Two conditions are checked, in order:
-#   1. The tunnel address is assigned to a local interface at all.
-#   2. The edge (10.10.0.1) responds to a probe over that tunnel - proof of
-#      a live, working tunnel, not just a WireGuard interface that exists
-#      but has never completed a handshake (e.g. wrong keys, edge down,
-#      border firewall not open on 51820/udp).
-#
-# See docs/operations/tunnel-setup.md for how to diagnose a timeout here.
+# This service now starts immediately on 127.0.0.1. The LAN reaches it
+# through the existing host port-forward (configure_lan_boundary.ps1), and
+# the approved origin reaches the same loopback listener over the WireGuard
+# tunnel address once that binding is up - see docs/operations/tunnel-setup.md
+# for how the private-binding port-forward is configured. Losing that
+# binding degrades only the public path; it never stops this service from
+# starting or serving the LAN.
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Wait-ForTunnelAddress {
-    param([string]$Address, [datetime]$Deadline)
-    while ([DateTime]::UtcNow -lt $Deadline) {
-        $found = Get-NetIPAddress -AddressFamily IPv4 -IPAddress $Address -ErrorAction SilentlyContinue
-        if ($null -ne $found) { return $true }
-        Start-Sleep -Seconds 2
-    }
-    return $false
-}
-
-function Wait-ForEdgeReachable {
-    param([string]$EdgeAddress, [datetime]$Deadline)
-    while ([DateTime]::UtcNow -lt $Deadline) {
-        try {
-            # -Quiet suppresses exceptions and just returns a boolean; this
-            # is an ICMP probe over the tunnel interface, not the public
-            # internet, so it is unaffected by the edge's public firewall
-            # policy (which correctly blocks unsolicited inbound ICMP).
-            $ok = Test-Connection -TargetName $EdgeAddress -Count 1 -Quiet -ErrorAction SilentlyContinue
-            if ($ok) { return $true }
-        } catch {
-            # Treated as "not yet reachable"; retry until the deadline.
-        }
-        Start-Sleep -Seconds 2
-    }
-    return $false
-}
-
-$deadline = [DateTime]::UtcNow.AddSeconds($MaxWaitSeconds)
-
-Write-Output "Waiting for tunnel address $TunnelAddress to be assigned (timeout ${MaxWaitSeconds}s)..."
-if (-not (Wait-ForTunnelAddress -Address $TunnelAddress -Deadline $deadline)) {
-    throw "WireGuard tunnel address $TunnelAddress did not appear within $MaxWaitSeconds seconds. Is the WireGuard tunnel service running? See docs/operations/tunnel-setup.md."
-}
-
-Write-Output "Tunnel address present. Waiting for a live handshake with edge $EdgeTunnelAddress..."
-if (-not (Wait-ForEdgeReachable -EdgeAddress $EdgeTunnelAddress -Deadline $deadline)) {
-    throw "Edge $EdgeTunnelAddress was not reachable over the tunnel within $MaxWaitSeconds seconds. The interface exists but the tunnel is not actually working (check keys, edge status, and that the border firewall permits 51820/udp)."
-}
-
-Write-Output "Tunnel is live. Starting Next.js on ${TunnelAddress}:${Port}..."
+Write-Output "Starting Next.js on 127.0.0.1:${Port} (no private-binding wait)..."
 
 $nodeExe = 'C:\Program Files\nodejs\node.exe'
 $webDir = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..\..\apps\web')).Path
 Set-Location -LiteralPath $webDir
 
-& $nodeExe 'node_modules\next\dist\bin\next' start --hostname $TunnelAddress --port $Port
+& $nodeExe 'node_modules\next\dist\bin\next' start --hostname 127.0.0.1 --port $Port
 exit $LASTEXITCODE

@@ -9,7 +9,7 @@ param(
     [string]$Evidence = 'evidence/public-deployment/firewall-upstream.md'
 )
 
-# Read-only verifier for the laptop-side boundary (T088), mirroring
+# Read-only verifier for the laptop-side boundary (T052), mirroring
 # scripts/windows/verify_lan_boundary.ps1's shape: collect PASS/FAIL checks,
 # write masked evidence, exit 1 on any failure.
 
@@ -20,7 +20,7 @@ $checks = [System.Collections.Generic.List[pscustomobject]]::new()
 
 function Add-Check($name, $observed, $expected, $pass) {
     $checks.Add([pscustomobject]@{ Name = $name; Observed = $observed; Expected = $expected; Pass = $pass })
-    if (-not $pass) { $script:failures.Add("$name: $observed") }
+    if (-not $pass) { $script:failures.Add("${name}: $observed") }
 }
 
 # Internal ports stay loopback-only.
@@ -30,14 +30,23 @@ foreach ($port in 8000, 8188) {
     Add-Check "internal-port-$port" ($(if ($unsafe.Count -gt 0) { 'non-loopback listener present' } else { 'loopback only' })) 'loopback only' ($unsafe.Count -eq 0)
 }
 
-# Web port listens on the tunnel address, not loopback and not a wildcard.
-$webListener = @($listeners | Where-Object { $_.LocalPort -eq $WebPort -and $_.LocalAddress -eq $TunnelAddress })
-Add-Check "web-port-$WebPort-bind" ($(if ($webListener.Count -gt 0) { "listening on $TunnelAddress" } else { 'not listening on tunnel address' })) "listening on $TunnelAddress only" ($webListener.Count -gt 0)
+# Web service itself binds loopback only (feature 003: it starts
+# independently of the private binding - see contracts/compute-link.md C4).
+# It must NOT bind the tunnel address directly.
+$directTunnelBind = @($listeners | Where-Object { $_.LocalPort -eq $WebPort -and $_.LocalAddress -eq $TunnelAddress -and (Get-Process -Id $_.OwningProcess -ErrorAction SilentlyContinue).ProcessName -match 'node' })
+Add-Check "web-not-directly-bound-to-tunnel" ($(if ($directTunnelBind.Count -gt 0) { 'node process bound directly to tunnel address' } else { 'not directly bound' })) 'not directly bound (reached via portproxy instead)' ($directTunnelBind.Count -eq 0)
 
-# No portproxy entries.
-$proxyText = ((& netsh interface portproxy show v4tov4) -join "`n").Trim()
-$proxyEmpty = $proxyText -match 'Listen on ipv4:\s*Connect to ipv4:\s*Address\s+Port\s+Address\s+Port\s*-+\s+-+\s+-+\s+-+\s*$'
-Add-Check 'portproxy-empty' ($(if ($proxyEmpty) { 'empty' } else { 'entries present' })) 'empty' $proxyEmpty
+# Web service listens on loopback.
+$loopbackListener = @($listeners | Where-Object { $_.LocalPort -eq $WebPort -and $_.LocalAddress -eq '127.0.0.1' })
+Add-Check "web-port-$WebPort-loopback-bind" ($(if ($loopbackListener.Count -gt 0) { 'listening on 127.0.0.1' } else { 'not listening on loopback' })) 'listening on 127.0.0.1' ($loopbackListener.Count -gt 0)
+
+# The portproxy entry forwards the tunnel address to that loopback listener -
+# this is what makes the address reachable now that Next.js itself binds
+# loopback only.
+$proxyText = (& netsh interface portproxy show v4tov4) -join "`n"
+$escapedTunnel = [regex]::Escape($TunnelAddress)
+$exactProxy = $proxyText -match "(?m)^\s*$escapedTunnel\s+$WebPort\s+127\.0\.0\.1\s+$WebPort\s*$"
+Add-Check 'portproxy-tunnel-to-loopback' ($(if ($exactProxy) { "present: $TunnelAddress`:$WebPort -> 127.0.0.1:$WebPort" } else { 'missing or incorrect' })) "$TunnelAddress`:$WebPort -> 127.0.0.1:$WebPort" $exactProxy
 
 # Firewall rule is exactly the expected scoped allow rule.
 $rules = @(Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue)
@@ -70,7 +79,7 @@ if ($evidenceDir -and -not (Test-Path -LiteralPath $evidenceDir)) { New-Item -It
 $maskedTunnel = ($TunnelAddress -replace '\.\d+$', '.x')
 $maskedEdge = ($EdgePeer -replace '\.\d+$', '.x')
 $lines = [System.Collections.Generic.List[string]]::new()
-$lines.Add('# Upstream (laptop-side) Boundary Evidence (T088)')
+$lines.Add('# Upstream (laptop-side) Boundary Evidence (T052)')
 $lines.Add('')
 $lines.Add("- Date/time (UTC): $([DateTime]::UtcNow.ToString('o'))")
 $lines.Add("- Tunnel address (masked): $maskedTunnel")

@@ -1,0 +1,37 @@
+# cloudflared config — Approved Origin (outbound tunnel connector)
+#
+# Copy to the origin host as config.yml, alongside the credentials file
+# cloudflared writes when the tunnel is created. Never commit the rendered
+# config.yml or the credentials JSON — see .gitignore and README.md in this
+# directory.
+#
+# This file describes an OUTBOUND-ONLY connector (feature 003). It replaces
+# feature 002's inbound origin proxy entirely: there is no public :443
+# listener, no Origin CA certificate, and no Authenticated Origin Pulls on
+# this host. cloudflared dials out to Cloudflare's edge and forwards matched
+# hostnames to the loopback pass-through described in deploy/caddy/Caddyfile.
+#
+# Required values (fill in on the origin host only):
+#   TUNNEL_ID            - UUID assigned when the tunnel is created
+#   TUNNEL_CREDENTIALS    - path to the credentials JSON on this host
+#   PUBLIC_HOSTNAME       - the accepted production hostname (e.g.
+#                           twin3dgen.mangosgo.com), supplied by the operator
+#                           once authorization and Cloudflare zone access are
+#                           confirmed (see specs/003-outbound-tunnel-entry/spec.md FR-011)
+
+tunnel: ${TUNNEL_ID}
+credentials-file: ${TUNNEL_CREDENTIALS}
+
+# No inbound port is opened by this process. All traffic arrives over the
+# outbound-initiated tunnel connection only (FR-003).
+ingress:
+  - hostname: ${PUBLIC_HOSTNAME}
+    service: http://127.0.0.1:8443
+    originRequest:
+      # Streaming pass-through: do not buffer request or response bodies at
+      # the connector layer either (contracts/origin-entry.md O3 / FR-014a).
+      disableChunkedEncoding: false
+      noTLSVerify: false
+  # Catch-all: any unmatched hostname gets no response, never the
+  # application. There is exactly one public route (FR-002).
+  - service: http_status:404

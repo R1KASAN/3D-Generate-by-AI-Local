@@ -2,22 +2,21 @@
 <service>
   <id>Local3D-Web</id>
   <name>Local 3D Web</name>
-  <description>Next.js frontend for local 3D generation, bound to the WireGuard tunnel address (10.10.0.2) so the public edge at 161.200.90.4 can reach it while ports 8000/8188 stay loopback-only. See docs/operations/tunnel-setup.md.</description>
+  <description>Next.js frontend for local 3D generation, bound to loopback only. Reachable on the LAN through the existing host port-forward and from the approved origin (161.200.90.4) over the private WireGuard binding forwarded to the same loopback listener. Starts independently of that binding so the LAN-only workflow keeps working while it is down. See specs/003-outbound-tunnel-entry/contracts/compute-link.md C4.</description>
   <executable>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</executable>
-  <arguments>-NoLogo -NonInteractive -NoProfile -ExecutionPolicy Bypass -File "%BASE%\..\..\..\scripts\windows\start_web_service.ps1" -TunnelAddress 10.10.0.2 -EdgeTunnelAddress 10.10.0.1 -Port 3000</arguments>
+  <arguments>-NoLogo -NonInteractive -NoProfile -ExecutionPolicy Bypass -File "%BASE%\..\..\..\scripts\windows\start_web_service.ps1" -Port 3000</arguments>
   <workingdirectory>%BASE%\..\..\..\apps\web</workingdirectory>
   <startmode>Automatic</startmode>
   <stoptimeout>30 sec</stoptimeout>
   <onfailure action="restart" delay="10 sec" />
-  <!-- Order matters: the WireGuard tunnel must be up and the tunnel address
-       assigned before Next.js can bind to it. This <depend> reduces the
-       startup race but does not eliminate it (a dependency service can
-       report "started" before the interface address actually exists), so
-       start_web_service.ps1 also polls for the address and a live
-       handshake before invoking `next start`. Replace WireGuardTunnel$upstream
-       with the actual tunnel service name if it differs on the deployed
-       machine (WireGuard for Windows names it WireGuardTunnel$<tunnel-name>). -->
-  <depend>WireGuardTunnel$upstream</depend>
+  <!-- No dependency on the WireGuard tunnel service. Feature 002 depended on
+       it because the tunnel address was this service's own bind address;
+       under feature 003 the public entry moved to the approved origin, so
+       gating this service's startup on the private binding would take the
+       LAN-only workflow down whenever WireGuard is unavailable (FR-023a,
+       FR-023d, FR-037). The private binding is reconnected independently -
+       see scripts/windows/watchdog_tunnel.ps1 - and adds a route to this
+       already-running loopback listener once it is up. -->
   <depend>Local3D-API</depend>
   <log mode="roll-by-size-time">
     <sizeThreshold>10485760</sizeThreshold>
