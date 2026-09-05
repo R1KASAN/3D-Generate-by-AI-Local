@@ -9,6 +9,8 @@ The origin runs the connector and the **origin pass-through** (Caddy). The lapto
 
 ## Prerequisites
 
+**First time only**: if no management channel to the origin exists yet, follow `docs/operations/lab-origin-bootstrap.md` before this runbook — it covers the OS/UDP-reachability checks and the safe way to establish that channel without opening a management listener SC-018 forbids. Skip straight to the steps below only once that is done.
+
 Obtain authorized physical or remote access to the actual lab origin. The operator currently has only its approved address: no confirmed remote-management listener or connection method. Do not discover management ports by probing the public address. Inspect OS, interface assignment, egress, and local listeners after access is available; retain masked observations in `evidence/public-deployment/operator-inputs.md`.
 
 The private binding remains the existing narrow WireGuard contract: laptop initiates, each peer permits only the other peer's `/32`, origin has no configured laptop Endpoint, and laptop retains keepalive. No public HTTP or management listener is allowed. The clarified contract selects Option A: one narrowly scoped WireGuard UDP transport listener is permitted on the approved origin. Restrict it to the approved origin address, the WireGuard UDP port, and the WireGuard service; peer public-key authentication is required. The laptop's changing source address means the firewall cannot use a fixed remote CIDR. Do not add router forwarding, application ports, management ports, or catch-all rules. No source-address binding until local ownership of the address is verified.
