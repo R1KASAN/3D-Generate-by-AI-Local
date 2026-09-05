@@ -1,6 +1,6 @@
 # Runbook: Windows NVIDIA AI Server — Hardware Gate ถึง Public Deployment (Phase 7–12)
 
-**Owner:** Windows Server Operator; การเปิด public access ต้องผ่าน T085 owner-approval gate ก่อนทุกครั้ง | **Frequency:** As needed, ครั้งเดียวต่อการ build server หนึ่งเครื่อง | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
+**Owner:** Windows Server Operator; การเปิด public access ต้องผ่าน owner, permission และ management gate ของ feature-002 ก่อนทุกครั้ง | **Frequency:** As needed, ครั้งเดียวต่อการ build server หนึ่งเครื่อง | **Last Updated:** 2026-09-05 | **Last Run:** Not yet run
 
 **Document version:** 3.0 | **Source language:** Thai | **English translation:** [windows-ai-server-runbook.en.md](windows-ai-server-runbook.en.md), version 3.0
 
@@ -16,10 +16,10 @@
 | 8 | FastAPI คุย ComfyUI จริงได้ผ่าน adapter เดียวกับ mock | T068, T072–T074 |
 | 9 | สร้าง **textured GLB จริง** ได้ และ isolate ระหว่าง job ได้ | T075–T079 |
 | 10 | เว็บครบ flow ใช้งานได้จาก **เครื่องอื่นใน LAN** | T080–T084 |
-| 11 | เปิด HTTPS ออก public หลัง Owner อนุมัติ พร้อมการป้องกันด้วย per-job token | T085–T092 |
-| 12 | ทดสอบจากนอกเครือข่ายจริง + audit ปิดงานทั้งโปรเจกต์ | T093–T097 |
+| 11 | เปิด Cloudflare-proxied HTTPS หลังผ่าน gate ของ feature-002 พร้อม per-job token | T007–T026 |
+| 12 | ทดสอบจากนอกเครือข่ายจริง + audit ปิดงานทั้งโปรเจกต์ | T035–T049 |
 
-หยุดทันทีเมื่อ task ใด FAIL หรือ BLOCKED ห้ามข้าม gate เพื่อรายงานความคืบหน้า **Phase 11 มีเงื่อนไขพิเศษ**: ต้องได้ Owner approval แบบเจาะจงเป็นลายลักษณ์อักษรก่อนแตะ public infrastructure ใดๆ (ดู T085) — เป็นเงื่อนไขถาวรของ phase นี้ ไม่ใช่แค่ checklist ทั่วไป
+หยุดทันทีเมื่อ task ใด FAIL หรือ BLOCKED ห้ามข้าม gate เพื่อรายงานความคืบหน้า **Phase 11 มีเงื่อนไขพิเศษ**: ต้องได้ owner approval, written network permission และพิสูจน์ management path ของ origin เป็นลายลักษณ์อักษรก่อนแตะ public infrastructure ใดๆ (ดู feature-002 T007, T008, T021 และ T055) — เป็นเงื่อนไขถาวรของ phase นี้ ไม่ใช่แค่ checklist ทั่วไป
 
 ## Hardware boundary (ข้อบังคับ อ่านก่อนทุกอย่าง)
 
@@ -36,9 +36,9 @@
 
 ## Network boundary (สำคัญสำหรับ Phase 11)
 
-**อัปเดต 2026-09-04:** โปรเจกต์นี้ไม่ได้ใช้วิธี port forward ผ่าน router บ้าน/ที่ทำงานแล้ว Owner ได้รับ Public IP ที่จัดสรรตรงจากมหาวิทยาลัย (`161.200.90.4` ตามบันทึกข้อความ วฟ.2174/2567) สำหรับ **edge server** ซึ่งเป็นคนละเครื่องกับ Windows GPU server ที่ runbook นี้อธิบายอยู่ GPU server ไม่ได้ถือ public IP เอง แต่เชื่อมต่อออกไปหา edge ผ่าน WireGuard tunnel ดูรายละเอียดเต็มที่ `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` และ `docs/operations/public-cutover.md`
+**อัปเดต 2026-09-05:** โปรเจกต์นี้ไม่ได้ใช้วิธี port forward ผ่าน router บ้าน/ที่ทำงานแล้ว การออกแบบที่ร้องขอคง Public IP ที่จัดสรรตรงจากมหาวิทยาลัย (`161.200.90.4` ตามบันทึกข้อความลงวันที่ 26 ธ.ค. 2567 จากภาควิชาวิศวกรรมไฟฟ้า — ดู `evidence/public-deployment/allocation-memo-review.md` ว่าเอกสารฉบับนั้นครอบคลุมอะไรจริง) สำหรับ **edge server** ซึ่งเป็นคนละเครื่องกับ Windows GPU server ที่ runbook นี้อธิบายอยู่ การ assign และ reachability จริงยังเป็น deployment gate GPU server ไม่ได้ถือ public IP เอง แต่เชื่อมต่อออกไปหา edge ผ่าน WireGuard tunnel ดูรายละเอียดเต็มที่ `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` และ `docs/operations/public-cutover.md`
 
-- ไม่มีการตัดสินใจเรื่อง "router ของ operator" อีกต่อไป — ผู้มีอำนาจอนุมัติคือ **border firewall ของมหาวิทยาลัย** ไม่ใช่ router ทั่วไป ต้องอนุญาต inbound `443/tcp`, `80/tcp`, และ `51820/udp` มาที่ `161.200.90.4` เท่านั้น
+- ไม่มีการตัดสินใจเรื่อง "router ของ operator" อีกต่อไป — ผู้มีอำนาจอนุมัติคือ **border firewall ของมหาวิทยาลัย** ไม่ใช่ router ทั่วไป ต้องอนุญาต inbound `443/tcp` จาก Cloudflare ranges และ `51820/udp` จากทุก source มาที่ `161.200.90.4` เท่านั้น โดยไม่ขอเปิด port 80
 - Windows GPU server อยู่บนเครือข่ายจริงที่มันเสียบอยู่ตอนนั้น (มหาวิทยาลัย/บ้าน/hotspot มือถือ) และเข้าถึงได้ผ่าน tunnel เท่านั้น — ออกแบบมาให้ย้ายเครือข่ายได้อิสระโดยเจตนา ห้าม forward port บน router ของเครื่องนั้นเอง ไม่มีส่วนใดของ deployment นี้พึ่งพาสิ่งนั้น
 - `161.200.90.3` ถูกจัดสรรไว้ใช้งานอื่น ห้ามตั้งค่า, forward, หรือ probe ด้วยสิ่งใดที่เกี่ยวข้องกับโปรเจกต์นี้เด็ดขาด
 - domain ที่ใช้จะชี้ไปที่ IP คงที่ของ edge server (`161.200.90.4`) ไม่ใช่ IP เครือข่ายของ GPU server เองซึ่งเปลี่ยนไปตามที่มันย้ายไป
@@ -53,6 +53,10 @@
 - [Tasks](../../specs/001-local-3d-generation/tasks.md)
 - [Research decisions](../../specs/001-local-3d-generation/research.md)
 - [Quickstart and gates](../../specs/001-local-3d-generation/quickstart.md)
+- [Cloudflare public-entry specification](../../specs/002-cloudflare-public-entry/spec.md)
+- [Cloudflare public-entry plan](../../specs/002-cloudflare-public-entry/plan.md)
+- [Cloudflare public-entry tasks](../../specs/002-cloudflare-public-entry/tasks.md)
+- [Cloudflare public-entry quickstart](../../specs/002-cloudflare-public-entry/quickstart.md)
 - [AI runtime source register](../reference/ai-runtime-sources.md)
 - [GenerationAdapter contract](../../specs/001-local-3d-generation/contracts/generation-adapter.md)
 - [Workflow-manifest contract](../../specs/001-local-3d-generation/contracts/comfyui-workflow-manifest.md)
@@ -69,10 +73,10 @@
 |---|---|---|
 | SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | เป็น reference เท่านั้น ห้ามเพิ่มเข้า MVP workflow, dependency หรือ task completion criteria |
 | Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | เป็นงาน manual หลัง MVP ไม่ใช่ส่วนของ FastAPI/ComfyUI pipeline |
-| แก้ access control จาก "public entry + per-job token" เป็นแบบอื่น | ต้อง Owner ตัดสินใจใหม่ | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) บันทึก approved decision นี้ไว้แล้ว การเปลี่ยนต้องขออนุมัติใหม่เป็นลายลักษณ์อักษร ห้ามเปลี่ยนเอง |
-| เปิด public ก่อนที่ T085 owner-approval gate จะผ่าน | ต้องหยุดเสมอ | ดู "Phase 11 — T085" ด้านล่าง เป็นเงื่อนไขที่ยกเว้นไม่ได้ |
+| แก้ access control จาก "public entry + per-job token" เป็นแบบอื่น | ต้อง Owner ตัดสินใจใหม่ | owner gate ของ feature-002 เป็นแหล่งอ้างอิงนโยบายปัจจุบัน การเปลี่ยนต้องขออนุมัติใหม่เป็นลายลักษณ์อักษร ห้ามเปลี่ยนเอง |
+| เปิด public ก่อน owner, permission และ management gate ของ feature-002 จะผ่าน | ต้องหยุดเสมอ | ดูหัวข้อ Cloudflare public-entry ปัจจุบันด้านล่าง เป็นเงื่อนไขที่ยกเว้นไม่ได้ |
 
-**เกี่ยวกับ Public IP:** ไม่ใช่ secret แต่ไม่แนะนำให้พิมพ์ตัวเลข IP ตรงๆ ลงในแชท/LINE — ให้บันทึกไว้ใน `evidence/public-deployment/dns-router.md` (redacted ตามที่ T089 กำหนด) แล้วให้ Owner เปิดดูจาก evidence file หรือ repo แทน
+**เกี่ยวกับ Public IP:** ไม่ใช่ secret แต่ไม่แนะนำให้พิมพ์ตัวเลข IP ตรงๆ ลงในแชท/LINE — ให้เก็บไว้ใน protected origin configuration และใช้ evidence แบบ mask ของ feature-002 แทน
 
 **ค่าที่ห้ามยึดเป็น requirement:** ตัวเลข tuning ที่พบในวิดีโอหรือ tutorial ภายนอก เช่น `steps=100`, octree resolution `900–1000` หรือ face count `1,000,000` เป็น **ค่าทดลอง** ไม่ใช่ข้อกำหนดของ MVP ต้องพิสูจน์กับ VRAM ของเครื่องจริงและบันทึกค่าที่ใช้จริงลง manifest
 
@@ -122,7 +126,7 @@ Expose :8188, :8000, :3000, or :3389 publicly
 - [ ] Windows PC มีพื้นที่ว่างเพียงพอสำหรับ runtime/model ตาม manifest
 - [ ] ComfyUI, FastAPI และ browser ยังไม่ถูกเปิดออก Internet ก่อนถึง Phase 11; ports `3000`, `8000`, `8188`, `3389` ต้องเป็น private เสมอ
 - [ ] Operator อ่าน artifact ใน Source of truth ครบแล้ว
-- [ ] (สำหรับ Phase 11) IT มหาวิทยาลัยยืนยันแล้วว่า border firewall อนุญาต inbound 443/tcp, 80/tcp, และ 51820/udp (WireGuard) มาที่ `161.200.90.4` เท่านั้น — ไม่มีการตัดสินใจเรื่อง router ของ operator ใน topology นี้
+- [ ] (สำหรับ public entry ของ feature-002) มี written permission จาก IT มหาวิทยาลัยสำหรับ inbound 443/tcp จาก Cloudflare ranges และ 51820/udp จากทุก source มาที่ origin ที่อนุมัติบันทึกแล้ว โดยไม่ขอเปิด port 80 — ไม่มีการตัดสินใจเรื่อง router ของ operator ใน topology นี้
 
 ## Procedure
 
@@ -419,147 +423,58 @@ python scripts/verify/validate_glb.py <GLB_PATH>
 
 ---
 
-## Phase 11 — Protected Caddy HTTPS deployment (T085–T092)
-
-> เข้า phase นี้ได้เมื่อ `evidence/lan/phase-10-gate.md` = PASS **และ** T085 (owner-approval gate) อนุมัติแล้วเท่านั้น ห้ามแตะ domain/DNS/Caddy/firewall ก่อนถึงขั้นนี้
-
-**Hard gate ที่ยกเว้นไม่ได้:** access control ที่ approve ไว้คือ **public HTTPS entry โดยไม่มี site-wide login และมี per-job `X-Job-Token` สำหรับข้อมูลของแต่ละงาน** เท่านั้น ถ้า decision นี้หายไปหรือถูกแทนที่โดยไม่มี Owner อนุมัติใหม่ ให้หยุด phase ทันที ห้ามเปิด port 3000, 8000, 8188 หรือ 3389 ออก public ไม่ว่ากรณีใด
-
-### Step 22: T085 — Owner approval gate (ทำก่อนทุกอย่างใน phase นี้)
-
-ส่งข้อมูลนี้ให้ Owner แล้ว **รอการอนุมัติเป็นลายลักษณ์อักษร** ก่อนแตะ public infrastructure ใดๆ:
-
-| # | ข้อมูลที่ต้องได้รับอนุมัติ |
-|---|---|
-| 1 | นโยบาย public entry ที่ไม่มี site-wide login |
-| 2 | ขอบเขต model-license/territory ของผู้ใช้ที่อนุญาต |
-| 3 | โดเมนที่จะใช้ หรือ DDNS provider |
-| 4 | ใครเป็นเจ้าของบัญชี DNS/DDNS |
-| 5 | Public IP ปัจจุบัน (revalidate สดๆ กับ `161.200.90.4` จริง ไม่ใช่จากบันทึกการจัดสรร) |
-| 6 | สถานะ static/dynamic/CGNAT ของ IP นั้น (การจัดสรรเป็นแบบ static/ตรง แต่ต้องวัดจริง ไม่ใช่สมมติเอา) |
-| 7 | border firewall ของมหาวิทยาลัยอนุญาต inbound 443/tcp, 80/tcp, และ 51820/udp มาที่ `161.200.90.4` ไหม |
-
-บันทึกการอนุมัติ (หรือ BLOCKED) ลง `evidence/public-deployment/owner-gate.md`
-
-**Expected result:** ทุกข้อได้รับอนุมัติชัดเจนจาก Owner เป็นลายลักษณ์อักษร
-
-**If it fails:** ถ้าข้อใดข้อหนึ่งยังไม่ได้รับอนุมัติ ให้บันทึกเป็น `BLOCKED` **โดยไม่แตะ public infrastructure เลย** ห้ามเดาหรือเริ่ม Step 23 ต่อ
-
-### Step 23: T086 — Caddy configuration contract tests
-
-เขียน `tests/security/test_caddy_contract.py` ทดสอบ HTTPS-only public entry ที่ไม่มี `basic_auth`, request-body limit, `/api` proxying, การส่งต่อ job token และแบน public upstream bind
-
-```powershell
-uv run --project apps/api pytest tests/security/test_caddy_contract.py
-```
-
-**Expected result:** test fail เพราะยังไม่มี Caddy config จริง (ตามหลัก test-first) และมี assertion ที่แบน public 3000/8000/8188/3389 ครบ
-
-**If it fails:** ถ้า test เขียนไม่ครบตาม T086 ให้แก้ test ก่อน ห้ามข้ามไป implement โดยไม่มี test คุม
-
-### Step 24: T087 — Implement Caddy configuration
-
-สร้าง `deploy/caddy/Caddyfile` และ `deploy/caddy/.env.example` สำหรับ hostname ที่อนุมัติแล้วโดยไม่มี `basic_auth`
-
-```powershell
-caddy validate --config deploy/caddy/Caddyfile
-```
-
-**Expected result:** `caddy validate` ผ่าน, T086 ผ่าน, public HTTPS routing และการส่งต่อ job token ทำงาน และ **ไม่มี secret ถูก commit**
-
-**If it fails:** ห้ามฝัง token หรือ secret อื่นใน Caddyfile ถ้าจำเป็นต้องใช้ secret ให้ใช้ environment variable แล้ว scan ซ้ำก่อน commit
-
-### Step 25: T088 — Windows Firewall boundary
-
-สร้าง `deploy/firewall/configure-public-boundary.ps1` (least-privilege) และ `deploy/firewall/verify-public-boundary.ps1` (read-only verifier)
-
-**Expected result:** `evidence/public-deployment/firewall.md` บันทึกว่า 443 allowed, 80 (ถ้าเปิด) จำกัดแค่ redirect/certificate เท่านั้น และ 3000/8000/8188/3389 **blocked**
-
-**If it fails:** ถ้า verifier เจอ port internal เปิดอยู่ ให้หยุดทันที เป็น security boundary ที่ห้ามผ่อน
-
-### Step 26: T089 — DNS และยืนยัน border firewall ของมหาวิทยาลัย
-
-สร้าง DNS A record ที่ Owner อนุมัติใน T085 ชี้ไปที่ `161.200.90.4` ยืนยันเป็นลายลักษณ์อักษรกับ IT มหาวิทยาลัยว่า border firewall อนุญาตเฉพาะ inbound 443/tcp, 80/tcp, และ 51820/udp (WireGuard) มาที่ address นั้น — ไม่มี router ให้ forward port ใน topology นี้
-
-บันทึกหลักฐานแบบ redacted (ปิดบัง IP บางส่วนตามความเหมาะสม) ใน `evidence/public-deployment/dns-router.md`
-
-**Expected result:** public DNS resolve ไปยัง Public IP ที่ revalidate แล้ว, ไม่มี CGNAT/routing blocker เหลืออยู่, และ **ไม่มี internal port forward เลย** — WireGuard tunnel ไปหา GPU laptop คือ private point-to-point link ระหว่าง edge กับ laptop เท่านั้น ไม่ใช่ port forward และไม่เคยพาไปไกลกว่า tunnel address ของ laptop
-
-**If it fails:** ถ้าเจอ CGNAT หรือ border firewall ไม่อนุญาต 443/80/51820 จริงตามที่รายงานไว้ใน T085 ให้หยุดและกลับไปหา Owner ทันที ห้ามหาทาง port หรือ protocol อื่นทดแทน
-
-### Step 27: T090 — TLS certificate + redirect validation
-
-รัน `scripts/verify/test_https_boundary.py`
-
-**Expected result:** `evidence/public-deployment/tls.md` แสดง trusted hostname validation, HTTPS 443 สำเร็จ, HTTP 80 ทำแค่ redirect/certificate issuance และ **ไม่มี certificate warning**
-
-**If it fails:** ห้ามใช้ self-signed certificate หรือ bypass warning เพื่อให้ผ่าน หยุดและแก้ที่ domain/DNS config
-
-### Step 28: T091 — Auth boundary tests จาก external client
-
-รัน `scripts/verify/test_public_auth.py` จากเครื่องนอกเครือข่าย
-
-**Expected result:** `evidence/public-deployment/auth.md` แสดงว่าเข้า HTTPS และส่งงานที่ถูกต้องได้โดยไม่มี site-wide login, token ที่ไม่มีหรือผิด job คืน 404 แบบเดียวกันสำหรับข้อมูลของ job (ไม่บอกใบ้ว่า job มีจริงไหม) และ **ไม่มี token หลุดใน URL หรือ log ที่ capture ไว้**
-
-**If it fails:** ถ้า token หลุดใน log หรือ URL ให้หยุดทันที เป็นข้อมูลอ่อนไหวที่รั่วออกไปแล้ว
-
-### Step 29: T092 — External port scan
-
-รัน `scripts/verify/test_external_ports.py` จากนอกเครือข่าย
-
-**Expected result:** `evidence/public-deployment/ports.md` แสดงว่า 443 (และ 80 ถ้าเปิด) ทำงานตามคาด และ **3000, 8000, 8188, 3389 เชื่อมต่อไม่ได้จากภายนอกเลย**
-
-**If it fails:** ถ้า internal port ใดเชื่อมได้จากภายนอก ให้หยุดและปิดทันที ก่อนดำเนินการต่อ
-
-**Phase 11 exit criteria:** T085 owner gate อนุมัติแล้ว, TLS และ per-job access control ผ่านครบ, มีแค่ทางเข้า public ที่ตั้งใจเท่านั้นที่เข้าถึงได้ และไม่มี secret ถูก commit
-
----
-
-## Phase 12 — External-network acceptance และ final audit (T093–T097)
-
-> เข้า phase นี้ได้เมื่อ Phase 11 exit criteria ผ่านครบแล้วเท่านั้น
-
-### Step 30: T093 — External-network full-flow acceptance
-
-สร้างและรัน checklist ที่ `docs/operations/external-acceptance.md`
-
-**Expected result:** `evidence/public-deployment/full-flow.md` บันทึกว่า public submission ได้จริง, เห็น queue/process state จริง, preview textured GLB ได้ครบ (rotate/zoom/pan/reset), และ download ได้ไฟล์ byte-identical ด้วย job token ที่ระบบคืนให้ ผ่าน HTTPS จริงจากนอกเครือข่าย
-
-**If it fails:** บันทึกจุดที่ flow ขาดและหยุด ห้ามใช้ผลจาก LAN แทน external evidence
-
-### Step 31: T094 — External-network security checklist
-
-สร้าง `docs/operations/external-network-security-checklist.md` และรัน `scripts/verify/test_external_acceptance.py` ครอบคลุม public entry, missing/wrong-token, expired-job, invalid upload, low-disk admission และ internal-port cases
-
-**Expected result:** `evidence/public-deployment/negative-cases.md` แสดง response ที่ปลอดภัยทุกกรณีและ **zero information leakage**
-
-**If it fails:** ถ้า error message เผยข้อมูล internal (path, stack trace, job existence) ให้หยุดและแก้ก่อน
-
-### Step 32: T095 — Operator runbook drill
-
-สร้าง `docs/operations/operator-runbook.md` แล้วซ้อมจริง
-
-**Expected result:** `evidence/operations/runbook-drill.md` trace Job ID ได้ตลอด lifecycle: submission, queue, processing, result, download, failure, restart, 24-hour expiry และ low-disk recovery โดยไม่เผย user content หรือ secret
-
-**If it fails:** ถ้า trace ขาดช่วงไหน ให้ระบุจุดที่ recovery ไม่ครบและหยุด
-
-### Step 33: T096 — Final acceptance matrix
-
-สร้าง `evidence/final/mvp-acceptance.md`
-
-**Expected result:** ทุก SC-001–SC-007 และ FR-001–FR-018 ใน [spec.md](../../specs/001-local-3d-generation/spec.md) ต้อง map ไปยัง evidence จริงที่ผ่านแล้ว รายการที่ยังไม่ผ่านต้องระบุ `BLOCKED` ตรงๆ
-
-**If it fails:** ห้ามใช้ checkbox หรือ report เฉยๆ เป็นหลักฐาน ต้องอ้าง evidence file จริงเท่านั้น
-
-### Step 34: T097 — Final constitution and scope audit
-
-ตรวจกับ [constitution.md](../../.specify/memory/constitution.md) แล้วบันทึก `evidence/final/constitution-audit.md`
-
-**Expected result:** ไม่มี Post-MVP component (SDXL, Blender retopo ฯลฯ) หลุดเข้ามา, exception ทุกอันมี reason/risk/owner/review trigger ครบ, internal port ยังคง private และ verdict เป็น `PASS` หรือ `BLOCKED` อย่างซื่อสัตย์
-
-**If it fails:** รายงาน `BLOCKED` พร้อมสิ่งที่ต้องแก้ ห้ามปิดเป็น PASS ทั้งที่ยังมีข้อค้างคา
-
-**Phase 12 exit criteria:** external core flow, negative security check, operator recovery drill, requirement evidence matrix และ constitution audit ผ่านครบทุกข้อ — **นี่คือจุดจบของ MVP**
+## Phase 11 — Cloudflare public entry และ external acceptance (feature 002, ถูกแทนที่แล้ว)
+
+**ถูกแทนที่ด้วย feature 003 แล้ว** ทั้ง section นี้อธิบาย architecture แบบ
+inbound-proxy ของ feature 002 (Full-strict TLS, Authenticated Origin Pulls,
+Origin CA certificate, และ web service ที่ bind กับ WireGuard tunnel
+address) เก็บไว้เป็นบันทึกประวัติเท่านั้น แหล่งอ้างอิงปัจจุบันคือ
+`specs/003-outbound-tunnel-entry/tasks.md` และ `quickstart.md` ซึ่งเปลี่ยน
+จาก inbound proxy เป็น **outbound** Cloudflare Tunnel connector: origin ไม่มี
+public listener เลย ไม่ถือ certificate secret ใด ๆ และ web service เริ่มทำงาน
+ได้อิสระจาก WireGuard binding แล้ว (ดู
+`specs/003-outbound-tunnel-entry/contracts/compute-link.md`) **ห้ามทำตาม
+ขั้นตอนด้านล่างนี้บน feature-003 deployment** เพราะเป็น design ที่ถูกถอดออก
+จริง ไม่ใช่แค่เปลี่ยนชื่อ
+
+ลำดับ public-entry เดิม T085–T097 ถูกถอนออกและ **ห้ามนำไปรัน** แม้ภายใต้
+feature 002 เช่นกัน
+
+### Gate และลำดับปัจจุบัน
+
+1. ปิด owner/model-license/territory gate และขอ written permission ให้ครบ
+   เฉพาะ `443/tcp` จาก Cloudflare ranges ปัจจุบัน และ `51820/udp` จากทุก
+   source ไม่ต้องเปิด port 80
+2. ตัดสินใจและพิสูจน์ management path ของ origin ด้วย connection ใหม่
+   ก่อนใช้ default-deny rule ใดๆ
+3. ตั้งค่า Cloudflare หลัง gate ครบ: application hostname เดียวแบบ proxied,
+   Full (strict), Authenticated Origin Pulls และ Origin CA ห้ามสร้าง DNS-only
+   record สำหรับ tunnel endpoint
+4. ติดตั้งและ validate Caddy ที่ origin: listener มีเฉพาะ 443, บังคับ provider
+   client certificate, ไม่บันทึก job credential ใน project-controlled logs และ
+   proxy ไปเฉพาะ WireGuard address ของ laptop
+5. Apply และ verify boundary บนเครื่องเป้าหมาย แล้วรัน external, degraded-state,
+   mobility และ recovery checks ตาม quickstart ของ feature ปัจจุบัน
+
+### Network boundary (topology ปัจจุบัน)
+
+- Edge: `443/tcp` รับจาก Cloudflare ranges เท่านั้น; `51820/udp` รับจาก
+  ทุก source สำหรับ WireGuard ที่ authenticate แล้ว; management รับจาก trusted
+  source ที่อนุมัติ; อื่นๆ deny ทั้งหมด
+- GPU laptop: `10.10.0.2:3000` รับจาก `10.10.0.1/32` ผ่าน WireGuard เท่านั้น;
+  FastAPI และ ComfyUI bind ที่ loopback; RDP ถูก deny
+- ไม่มี operator-router port forwarding, ไม่มี public port 80 และไม่มี LAN
+  `portproxy` หลัง cutover ห้ามสร้าง LAN proxy เดิมกลับมา
+- physical address ของ laptop ไม่อยู่ใน public configuration; ย้าย network แล้ว
+  ห้ามต้องแก้ DNS, proxy หรือ tunnel-address
+
+### หลักฐานที่ต้องมี
+
+ใช้ task ID ของ feature 002 และบันทึกผลแบบ mask ใต้
+`evidence/public-deployment/` ห้ามใช้ผลจาก LAN เป็นหลักฐาน external
+release ยัง blocked จนกว่าจะมี owner approval, management access, provider
+controls, origin validation, positive WireGuard traversal และหลักฐาน full-flow/
+mobility จากนอกเครือข่ายครบ
 
 ## Verification
 
@@ -583,7 +498,7 @@ caddy validate --config deploy/caddy/Caddyfile
 - [ ] `evidence/lan/phase-10-gate.md` มี verdict ที่อ้าง evidence ได้
 - [ ] `evidence/public-deployment/owner-gate.md` มีการอนุมัติทั้ง 6 ข้อจาก Owner เป็นลายลักษณ์อักษร
 - [ ] `evidence/public-deployment/firewall.md` ยืนยัน 3000/8000/8188/3389 blocked จากภายนอก
-- [ ] `evidence/public-deployment/dns-router.md` ยืนยัน DNS ชี้ IP ที่ revalidate แล้ว ไม่มี CGNAT blocker
+- [ ] `deploy/cloudflare/dns-records.md` และ external evidence ของ feature-002 ยืนยัน proxied DNS record และไม่มีการเปิดเผย origin
 - [ ] `evidence/public-deployment/tls.md` ยืนยัน HTTPS ผ่านไม่มี certificate warning
 - [ ] `evidence/public-deployment/auth.md` ยืนยันไม่มี job token หรือ secret อื่นหลุดใน log
 - [ ] `evidence/public-deployment/ports.md` ยืนยัน internal port ทั้งหมดเชื่อมไม่ได้จากภายนอก
@@ -609,12 +524,15 @@ caddy validate --config deploy/caddy/Caddyfile
 | job ซ้ำหลัง restart | มี auto-resubmit อยู่ | หยุด T078; ต้อง reconcile ผ่าน `/history` ไม่ใช่ส่งใหม่ |
 | service ไม่ start หลัง reboot | dependency order หรือ service identity ผิด | แก้ service definition; ห้าม start ด้วยมือแล้วบอกว่าผ่าน |
 | เครื่อง LAN เข้า 8000/8188 ได้ | bind หรือ firewall rule ผิด | หยุด T083 ทันที เป็น security boundary |
-| owner-gate.md ยังมีข้อค้างไม่อนุมัติ | ยังไม่ได้ถาม Owner ครบ หรือ Owner ยังไม่ตอบ | หยุดที่ T085; ห้ามเริ่ม T086 ก่อนอนุมัติครบ |
-| Border firewall มหาวิทยาลัยไม่ยอมเปิด 443/80/51820 มาที่ `161.200.90.4` | นโยบาย IT ยังไม่อนุมัติ หรือคำขอชี้ไป address ผิด | หยุด T089; รายงาน Owner ห้ามใช้ `161.200.90.3` หรือพอร์ตอื่นแทนเด็ดขาด |
+| owner-gate.md ยังมีข้อค้างไม่อนุมัติ | ยังไม่ได้ถาม Owner ครบ หรือ Owner ยังไม่ตอบ | หยุดที่ gate ของ feature-002; ห้ามเริ่ม live setup ก่อน T007, T008, T021 และ T055 ผ่านครบ |
+| Border firewall มหาวิทยาลัยไม่ยอมเปิด flow 443/51820 ที่จำเป็นไปยัง origin ที่อนุมัติ | นโยบาย IT ยังไม่อนุมัติ หรือคำขอชี้ไป address ผิด | หยุด T007 ของ feature-002; รายงาน Owner ห้ามใช้ address อื่นหรือพอร์ตอื่นแทนเด็ดขาด |
 | WireGuard tunnel ระหว่าง edge กับ laptop ต่อไม่ขึ้น | border firewall ยังไม่เปิด 51820/udp จริง, ลืมใส่ `PersistentKeepalive`, หรือมี VPN adapter อื่นแย่ง default route | ดู `docs/operations/tunnel-setup.md` หัวข้อ Troubleshooting — วินิจฉัยที่ชั้น tunnel เสมอ อย่าแก้โดย restart web service |
-| Certificate warning หรือ self-signed cert โผล่ | DNS ยังไม่ propagate หรือ domain ผิด | หยุด T090; ห้าม bypass warning ห้าม deploy ทั้งที่ยังมี warning |
-| Job token หรือ secret อื่นโผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T091 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
-| Internal port เข้าได้จากภายนอกใน T092 | firewall rule ยังไม่ครอบคลุมพอ | หยุดทันที; ปิด service จนกว่าจะแก้ firewall เสร็จ |
+| Certificate warning หรือ self-signed cert โผล่ | DNS ยังไม่ propagate หรือ domain ผิด | หยุด T025 ของ feature-002; ห้าม bypass warning ห้าม deploy ทั้งที่ยังมี warning |
+| Job token หรือ secret อื่นโผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T014/T026 ของ feature-002 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
+| Internal port เข้าได้จากภายนอกใน boundary validation ของ feature-002 | firewall rule ยังไม่ครอบคลุมพอ | หยุดทันที; ปิด service จนกว่าจะแก้ firewall เสร็จ |
+| **(feature 003)** ผู้เข้าชมเห็นหน้า error ของ Cloudflare เอง (เช่น หน้าแบบ 1033/502/530) แทนที่จะเป็นแอปพลิเคชัน | Approved origin ปิดเครื่องอยู่ หรือ `cloudflared` connector เชื่อมต่อ edge ไม่ได้ — นี่คือพฤติกรรมที่**คาดไว้และบันทึกไว้แล้ว** (FR-025a) ไม่ใช่ application bug | ตรวจสอบไฟฟ้า/เครือข่ายของ origin และสถานะของ connector เอง (`curl -sf http://127.0.0.1:20241/ready` บน origin ตาม `deploy/cloudflared/README.md`) **ก่อน**ไปแตะ GPU laptop หรือ application service ใด ๆ ถ้า origin ปกติดีแต่ยังเห็นหน้า error ของ provider แปลว่า DNS หรือ tunnel route ตั้งค่าผิด ไม่ใช่แอปพัง |
+| **(feature 003)** `/api/v1/health/ready` ตอบ `200` แต่เว็บไซต์แสดง generation failure แบบ `engine_unavailable` | `/ready` สะท้อนแค่ config ตอน startup และไม่เปลี่ยนอีกเลยหลังจากนั้น จึงตรวจจับ engine ที่ hang ระหว่างทำงานไม่ได้ | ตรวจ `/api/v1/health/engine` แทน เพราะมันทำการ probe จริงแบบ timeout สั้น ดู `specs/003-outbound-tunnel-entry/spec.md` FR-025 และ `apps/api/src/local3d/api/health.py` |
+| **(feature 003)** GPU laptop ให้บริการ LAN ไม่ได้หลัง reboot ตอน WireGuard ล่มอยู่ | ยังมีสมมติฐานเก่าค้างอยู่ว่า web service ต้องรอ tunnel ก่อนถึงจะ start ได้ | ภายใต้ feature 003 ต้องไม่เกิดเหตุการณ์นี้ — `scripts/windows/start_web_service.ps1` จะ start บน loopback โดยไม่มีเงื่อนไขเสมอ ถ้ายังเกิดอยู่ ให้ตรวจ `deploy/windows/services/web.xml` ว่าถอยกลับไปเป็นแบบ feature-002 (bind กับ tunnel address) หรือไม่ เทียบกับ `specs/003-outbound-tunnel-entry/contracts/compute-link.md` C4 |
 
 ## Rollback
 
@@ -637,9 +555,9 @@ caddy validate --config deploy/caddy/Caddyfile
 | LAN client เข้าถึง internal port ได้ | Project Owner | รายงานทันทีเป็น security issue |
 | Security/public exposure request ก่อน Phase 10 PASS | Project Owner | ปฏิเสธและอ้าง constitution/security boundary |
 | ยังไม่ยืนยันช่องทาง management (SSH/console) ของ edge server | Project Owner / IT มหาวิทยาลัย | แจ้งก่อนรัน `configure-public-edge.ps1` — สคริปต์เช็กก่อนทำเองอยู่แล้ว แต่ต้องตัดสินใจเลือกช่องทางก่อน (Stage 0.1 ของแผน deployment) |
-| ข้อมูลใน T085 ข้อใดข้อหนึ่งตอบไม่ได้ | Project Owner | บันทึก `BLOCKED` ใน `owner-gate.md` โดยไม่แตะ public infra |
-| Job token หรือ secret อื่นรั่วระหว่าง T091 | Project Owner | รายงานทันทีเป็น security incident แล้ว invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
-| Public exposure request ที่ยังไม่ผ่าน owner-gate | Project Owner | ปฏิเสธและอ้าง Constitution ข้อ IX + T085 |
+| ข้อมูลใน gate ของ feature-002 ข้อใดข้อหนึ่งตอบไม่ได้ | Project Owner | บันทึก `BLOCKED` ใน `owner-gate.md` โดยไม่แตะ public infra |
+| Job token หรือ secret อื่นรั่วระหว่าง validation ของ feature-002 | Project Owner | รายงานทันทีเป็น security incident แล้ว invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
+| Public exposure request ที่ยังไม่ผ่าน owner-gate | Project Owner | ปฏิเสธและอ้าง Constitution ข้อ IX + task ledger ของ feature-002 |
 
 ## History
 

@@ -29,6 +29,10 @@ class MockGenerationAdapter:
     def submission_count(self) -> int:
         return len(self._executions)
 
+    def is_live(self) -> bool:
+        """The mock has no external engine to hang or disconnect."""
+        return True
+
     def submit(self, request: GenerationRequest) -> EngineHandle:
         existing = self._idempotency.get(request.idempotency_key)
         if existing is not None:

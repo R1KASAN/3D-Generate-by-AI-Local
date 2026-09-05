@@ -54,3 +54,15 @@ class GenerationAdapter(Protocol):
     def submit(self, request: GenerationRequest) -> EngineHandle: ...
 
     def inspect(self, handle: EngineHandle) -> EngineObservation: ...
+
+    def is_live(self) -> bool:
+        """Fast liveness check, independent of any specific job.
+
+        Feature 003 FR-025/SC-008: the system must detect and report an
+        unavailable AI engine within five seconds, including a hang rather
+        than only an outright disconnect. This is deliberately separate
+        from submit()/inspect(), which may legitimately take much longer
+        for real generation work and must not be used as a stand-in for a
+        health check.
+        """
+        ...

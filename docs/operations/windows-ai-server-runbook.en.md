@@ -1,6 +1,6 @@
 # Runbook: Windows NVIDIA AI Server — Hardware Gate to Public Deployment (Phase 7–12)
 
-**Owner:** Windows Server Operator; opening public access always requires passing the T085 owner-approval gate first | **Frequency:** As needed, once per server build | **Last Updated:** 2026-09-03 | **Last Run:** Not yet run
+**Owner:** Windows Server Operator; opening public access always requires passing the feature-002 owner, permission, and management gates first | **Frequency:** As needed, once per server build | **Last Updated:** 2026-09-05 | **Last Run:** Not yet run
 
 **Document version:** 3.0 | **Source language:** Thai | **Thai source:** [windows-ai-server-runbook.th.md](windows-ai-server-runbook.th.md), version 3.0
 
@@ -16,10 +16,10 @@ Take the Windows NVIDIA server from "bare machine" to "AI server genuinely usabl
 | 8 | FastAPI talks to real ComfyUI through the same adapter contract as the mock | T068, T072–T074 |
 | 9 | A **real textured GLB** is produced and jobs stay isolated | T075–T079 |
 | 10 | The full web flow works from a **second device on the LAN** | T080–T084 |
-| 11 | HTTPS opens to the public after Owner approval, with per-job token protection | T085–T092 |
-| 12 | External-network testing plus the final project-closing audit | T093–T097 |
+| 11 | Cloudflare-proxied HTTPS opens only after the feature-002 gates, with per-job token protection | T007–T026 |
+| 12 | External-network testing plus the final project-closing audit | T035–T049 |
 
-Stop immediately when any task is FAIL or BLOCKED. Never skip a gate merely to report progress. **Phase 11 carries a special condition**: it requires explicit, written Owner approval before touching any public infrastructure (see T085) — this is a standing condition of the phase, not an ordinary checklist item.
+Stop immediately when any task is FAIL or BLOCKED. Never skip a gate merely to report progress. **Phase 11 carries a special condition**: it requires explicit, written owner approval, written network permission, and a proven origin management path before touching any public infrastructure (see feature-002 T007, T008, T021, and T055) — these are standing conditions of the phase, not ordinary checklist items.
 
 ## Hardware boundary (mandatory — read before anything else)
 
@@ -36,19 +36,21 @@ If anyone proposes running the AI server on macOS, or using macOS results to clo
 
 ## Network boundary (important for Phase 11)
 
-**Updated 2026-09-04:** this project does not use home/office router port
-forwarding. The Owner obtained a directly-assigned university public IP
-(`161.200.90.4`, memo วฟ.2174/2567) for an **edge server**, which is a
+**Updated 2026-09-05:** this project does not use home/office router port
+forwarding. The requested design retains a directly-assigned university public IP
+(`161.200.90.4`, named in an Electrical Engineering Department memo dated
+26 ธ.ค. 2567 — see `evidence/public-deployment/allocation-memo-review.md` for
+what that document actually covers) for an **edge server**, which is a
 separate machine from the Windows GPU server this runbook otherwise
-describes. The GPU server never holds a public IP; it connects outward to
+describes. Live assignment and reachability remain deployment gates. The GPU server never holds a public IP; it connects outward to
 the edge over a WireGuard tunnel. See
 `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` and
 `docs/operations/public-cutover.md` for the full architecture.
 
 - There is no "operator's own router" decision to make — the gating
   authority is the **university border firewall**, not a consumer router.
-  It must permit inbound `443/tcp`, `80/tcp`, and `51820/udp` to
-  `161.200.90.4` and nothing else.
+  It must permit inbound `443/tcp` from Cloudflare's published ranges and
+  `51820/udp` from any source to `161.200.90.4`; port 80 is not requested.
 - The Windows GPU server stays on whatever network it is physically on
   (university, home, mobile hotspot) and is reachable only via the tunnel
   — it is explicitly designed to be able to move between networks freely.
@@ -70,6 +72,10 @@ Read these before changing files or installing software:
 - [Tasks](../../specs/001-local-3d-generation/tasks.md)
 - [Research decisions](../../specs/001-local-3d-generation/research.md)
 - [Quickstart and gates](../../specs/001-local-3d-generation/quickstart.md)
+- [Cloudflare public-entry specification](../../specs/002-cloudflare-public-entry/spec.md)
+- [Cloudflare public-entry plan](../../specs/002-cloudflare-public-entry/plan.md)
+- [Cloudflare public-entry tasks](../../specs/002-cloudflare-public-entry/tasks.md)
+- [Cloudflare public-entry quickstart](../../specs/002-cloudflare-public-entry/quickstart.md)
 - [AI runtime source register](../reference/ai-runtime-sources.md)
 - [GenerationAdapter contract](../../specs/001-local-3d-generation/contracts/generation-adapter.md)
 - [Workflow-manifest contract](../../specs/001-local-3d-generation/contracts/comfyui-workflow-manifest.md)
@@ -86,10 +92,10 @@ When an external video or README conflicts with these artifacts, the project art
 |---|---|---|
 | SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | Reference only. Never add to the MVP workflow, dependencies, or task completion criteria. |
 | Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | Manual post-MVP work, not part of the FastAPI/ComfyUI pipeline. |
-| Changing access control away from "public entry + per-job token" | Requires a fresh Owner decision | [tasks.md T085](../../specs/001-local-3d-generation/tasks.md) records this approved decision. Changing it needs written re-approval — never change it unilaterally. |
-| Opening anything to the public before the T085 owner-approval gate passes | Always stop | See "Phase 11 — T085" below. This condition has no exceptions. |
+| Changing access control away from "public entry + per-job token" | Requires a fresh Owner decision | The feature-002 owner gate records the current requested policy. Changing it needs written re-approval — never change it unilaterally. |
+| Opening anything to the public before the feature-002 owner, permission, and management gates pass | Always stop | See the current Cloudflare public-entry section below. This condition has no exceptions. |
 
-**About the Public IP:** it is not a secret, but avoid typing the raw number into chat/LINE — record it in `evidence/public-deployment/dns-router.md` (redacted as T089 requires) and let the Owner view it from the evidence file or the repo instead.
+**About the Public IP:** it is not a secret, but avoid typing the raw number into chat/LINE — keep it in protected origin configuration and use the masked feature-002 evidence records instead.
 
 **Values that must not become requirements:** tuning numbers found in external videos or tutorials — such as `steps=100`, octree resolution `900–1000`, or a face count of `1,000,000` — are **experimental values**, not MVP requirements. Prove them against the real machine's VRAM and record the values actually used in the manifest.
 
@@ -139,7 +145,7 @@ Only **API-format** exported workflows may be used (not the regular workflow fil
 - [ ] The PC has sufficient free disk for manifest-defined runtime/model assets.
 - [ ] ComfyUI, FastAPI, and browser services are not Internet-facing before Phase 11; ports `3000`, `8000`, `8188`, and `3389` remain private at all other times.
 - [ ] The operator has read every Source-of-truth artifact.
-- [ ] (For Phase 11) University IT has confirmed the border firewall permits inbound 443/tcp, 80/tcp, and 51820/udp (WireGuard) to `161.200.90.4` only — there is no operator-router decision in this topology.
+- [ ] (For feature-002 public entry) written university IT permission for inbound 443/tcp from Cloudflare ranges and 51820/udp from any source to the approved origin is recorded; port 80 is not requested and there is no operator-router decision in this topology.
 
 ## Procedure
 
@@ -436,147 +442,59 @@ Create `evidence/lan/phase-10-gate.md` with commands, timestamps, Job IDs, logs,
 
 ---
 
-## Phase 11 — Protected Caddy HTTPS deployment (T085–T092)
-
-> Enter this phase only when `evidence/lan/phase-10-gate.md` = PASS **and** T085 (the owner-approval gate) has been approved. Never touch domain/DNS/Caddy/firewall before that.
-
-**Hard gate with no exceptions:** the approved access control is a **public HTTPS entry point without a site-wide login plus a per-job `X-Job-Token` for job resources**. If that decision is missing or gets replaced without fresh written Owner approval, stop the phase immediately. Never expose ports 3000, 8000, 8188, or 3389 publicly under any circumstance.
-
-### Step 22: T085 — Owner approval gate (do this before anything else in this phase)
-
-Send the Owner the following and **wait for written approval** before touching any public infrastructure:
-
-| # | Decision needing approval |
-|---|---|
-| 1 | The public-entry/no-site-wide-login policy |
-| 2 | The model-license/territory scope of permitted users |
-| 3 | Which domain or DDNS provider will be used |
-| 4 | Who controls the DNS/DDNS account |
-| 5 | The current Public IP (revalidated fresh right now against `161.200.90.4`, not the assignment memo) |
-| 6 | Whether that IP is static, dynamic, or behind CGNAT (the assignment is static/direct, but this must still be observed, not assumed) |
-| 7 | Whether the university border firewall permits inbound 443/tcp, 80/tcp, and 51820/udp to `161.200.90.4` |
-
-Record the approval (or BLOCKED) in `evidence/public-deployment/owner-gate.md`.
-
-**Expected result:** every item above is explicitly approved by the Owner in writing.
-
-**If it fails:** if any item is not yet approved, record it as `BLOCKED` **without touching public infrastructure at all**. Never guess, and never proceed to Step 23.
-
-### Step 23: T086 — Caddy configuration contract tests
-
-Write `tests/security/test_caddy_contract.py` testing HTTPS-only public entry without `basic_auth`, request-body limit, `/api` proxying, job-token forwarding, and banning public upstream binds.
-
-```powershell
-uv run --project apps/api pytest tests/security/test_caddy_contract.py
-```
-
-**Expected result:** the test fails because no Caddy config exists yet (test-first), and it includes assertions banning public 3000/8000/8188/3389.
-
-**If it fails:** if the test doesn't cover everything T086 requires, fix the test first — never implement ahead of a controlling test.
-
-### Step 24: T087 — Implement the Caddy configuration
-
-Create `deploy/caddy/Caddyfile` and `deploy/caddy/.env.example` for the approved hostname without `basic_auth`.
-
-```powershell
-caddy validate --config deploy/caddy/Caddyfile
-```
-
-**Expected result:** `caddy validate` passes, T086 passes, public HTTPS routing and job-token forwarding work, and **no secret is committed**.
-
-**If it fails:** never embed a token or other secret in the Caddyfile. Use environment variables only where a secret is genuinely required, then scan again before committing.
-
-### Step 25: T088 — Windows Firewall boundary
-
-Create `deploy/firewall/configure-public-boundary.ps1` (least-privilege) and `deploy/firewall/verify-public-boundary.ps1` (a read-only verifier).
-
-**Expected result:** `evidence/public-deployment/firewall.md` records 443 allowed, 80 (if enabled) limited strictly to redirect/certificate use, and 3000/8000/8188/3389 **blocked**.
-
-**If it fails:** if the verifier finds an internal port open, stop immediately — this security boundary must never be relaxed.
-
-### Step 26: T089 — DNS and university border-firewall confirmation
-
-Create the DNS A record the Owner approved in T085, pointed at `161.200.90.4`. Confirm in writing with university IT that the border firewall permits only inbound 443/tcp, 80/tcp, and 51820/udp (WireGuard) to that address — there is no router to forward ports on in this topology.
-
-Record redacted before/after evidence (partially masking the IP as appropriate) in `evidence/public-deployment/dns-router.md`.
-
-**Expected result:** public DNS resolves to the revalidated Public IP, no CGNAT/routing blocker remains, and **no internal port forward exists** — the WireGuard tunnel to the GPU laptop is a private point-to-point link between the edge and the laptop, not a port forward, and never routes anything beyond the laptop's tunnel address.
-
-**If it fails:** if CGNAT appears, or the border firewall does not actually permit 443/80/51820 as reported in T085, stop and go back to the Owner immediately. Never look for another port or protocol to work around it.
-
-### Step 27: T090 — TLS certificate and redirect validation
-
-Run `scripts/verify/test_https_boundary.py`.
-
-**Expected result:** `evidence/public-deployment/tls.md` shows trusted hostname validation, HTTPS 443 success, HTTP 80 doing only redirect/certificate issuance, and **no certificate warnings**.
-
-**If it fails:** never use a self-signed certificate or bypass a warning to make it pass. Stop and fix the domain/DNS config instead.
-
-### Step 28: T091 — Auth boundary tests from an external client
-
-Run `scripts/verify/test_public_auth.py` from a machine outside the network.
-
-**Expected result:** `evidence/public-deployment/auth.md` shows the HTTPS entry point and valid submissions work without a site-wide login, missing or wrong-job tokens return a uniform 404 for job resources (no hint whether the job exists), and **no token leaks into any captured URL or log**.
-
-**If it fails:** if a token leaks into a log or URL, stop immediately — that is sensitive data already exposed.
-
-### Step 29: T092 — External port scan
-
-Run `scripts/verify/test_external_ports.py` from outside the network.
-
-**Expected result:** `evidence/public-deployment/ports.md` shows 443 (and 80 if enabled) behaving as expected, and **3000, 8000, 8188, and 3389 are all unreachable from outside**.
-
-**If it fails:** if any internal port is reachable from outside, stop and close it before proceeding further.
-
-**Phase 11 exit criteria:** the T085 owner gate is approved, TLS and per-job access control both pass, only the intended public entry point is reachable, and no secret has been committed.
-
----
-
-## Phase 12 — External-network acceptance and final audit (T093–T097)
-
-> Enter this phase only after every Phase 11 exit criterion has passed.
-
-### Step 30: T093 — External-network full-flow acceptance
-
-Create and execute the checklist at `docs/operations/external-acceptance.md`.
-
-**Expected result:** `evidence/public-deployment/full-flow.md` records a real public submission, real queue/process state, a complete textured-GLB preview (rotate/zoom/pan/reset), and a byte-identical download using the returned job token — all over real HTTPS from outside the network.
-
-**If it fails:** record exactly where the flow broke and stop. LAN evidence is never a substitute for external evidence.
-
-### Step 31: T094 — External-network security checklist
-
-Create `docs/operations/external-network-security-checklist.md` and run `scripts/verify/test_external_acceptance.py` covering public entry, missing/wrong-token, expired-job, invalid upload, low-disk admission, and internal-port cases.
-
-**Expected result:** `evidence/public-deployment/negative-cases.md` shows a safe response for every case and **zero information leakage**.
-
-**If it fails:** if any error message exposes internal detail (paths, stack traces, whether a job exists), stop and fix it first.
-
-### Step 32: T095 — Operator runbook drill
-
-Create `docs/operations/operator-runbook.md`, then actually rehearse it.
-
-**Expected result:** `evidence/operations/runbook-drill.md` traces a Job ID across its full lifecycle — submission, queue, processing, result, download, failure, restart, 24-hour expiry, and low-disk recovery — without exposing user content or secrets.
-
-**If it fails:** identify exactly which recovery step is incomplete and stop.
-
-### Step 33: T096 — Final acceptance matrix
-
-Create `evidence/final/mvp-acceptance.md`.
-
-**Expected result:** every SC-001–SC-007 and FR-001–FR-018 in [spec.md](../../specs/001-local-3d-generation/spec.md) maps to real, passing evidence. Anything not yet passing must be marked `BLOCKED` honestly.
-
-**If it fails:** never treat a checkbox or a report alone as proof — only a cited evidence file counts.
-
-### Step 34: T097 — Final constitution and scope audit
-
-Check against [constitution.md](../../.specify/memory/constitution.md) and record `evidence/final/constitution-audit.md`.
-
-**Expected result:** no Post-MVP component (SDXL, Blender retopology, etc.) has crept in, every exception has a documented reason/risk/owner/review trigger, internal ports remain private, and the verdict is an honest `PASS` or `BLOCKED`.
-
-**If it fails:** report `BLOCKED` with what still needs fixing. Never close it as PASS while something remains unresolved.
-
-**Phase 12 exit criteria:** the external core flow, negative security checks, the operator recovery drill, the requirement-evidence matrix, and the constitution audit all pass — **this is the end of the MVP**.
+## Phase 11 — Cloudflare public entry and external acceptance (feature 002, superseded)
+
+**Superseded by feature 003.** This entire section describes feature 002's
+inbound-proxy architecture (Full-strict TLS, Authenticated Origin Pulls, an
+Origin CA certificate, and a web service bound to the WireGuard tunnel
+address) and is kept here only as historical record. The current source of
+truth is `specs/003-outbound-tunnel-entry/tasks.md` and its `quickstart.md`,
+which replace the inbound proxy with an **outbound** Cloudflare Tunnel
+connector: the origin has no public listener at all, holds no certificate
+secret, and the web service now starts independently of the WireGuard
+binding (see `specs/003-outbound-tunnel-entry/contracts/compute-link.md`).
+Do not follow the steps below on a feature-003 deployment; they describe a
+design that has been actively removed, not merely superseded in name.
+
+The former T085–T097 public-entry sequence is withdrawn and must not be
+executed under feature 002 either.
+
+### Current gates and sequence
+
+1. Close the owner/model-license/territory gate and obtain written network
+   permission for exactly `443/tcp` from current Cloudflare ranges and
+   `51820/udp` from any source. Port 80 is not requested.
+2. Decide and prove the origin management path from a fresh connection before
+   any default-deny rule is applied.
+3. Configure Cloudflare only after the gates are recorded: one proxied
+   application hostname, Full (strict), Authenticated Origin Pulls, and an
+   Origin CA certificate. Do not publish a DNS-only tunnel record.
+4. Install and validate the origin Caddy configuration. It is 443-only,
+   requires the provider client certificate, logs no project-controlled job
+   credential, and proxies only to the laptop's WireGuard address.
+5. Apply and verify the origin and laptop boundaries only on their target
+   machines, then run all external, degraded-state, mobility, and recovery
+   checks from the current feature's quickstart.
+
+### Network boundary (current topology)
+
+- Edge: `443/tcp` from Cloudflare ranges only; `51820/udp` from any source
+  for authenticated WireGuard; management from its approved trusted source;
+  everything else denied.
+- GPU laptop: `10.10.0.2:3000` from `10.10.0.1/32` over WireGuard only;
+  FastAPI and ComfyUI stay on loopback; RDP is denied.
+- There is no operator-router port forwarding, no public port 80, and no
+  LAN `portproxy` after cutover. Never recreate the stale LAN proxy.
+- The laptop's physical address is not part of public configuration; moving
+  networks must not require DNS, proxy, or tunnel-address edits.
+
+### Required evidence
+
+Use the feature-002 task IDs and record masked results under
+`evidence/public-deployment/`. Do not treat LAN results as external proof.
+The final release remains blocked until owner approval, management access,
+provider controls, origin validation, positive WireGuard traversal, and the
+off-campus full-flow/mobility evidence are all present.
 
 ## Verification
 
@@ -600,7 +518,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 - [ ] `evidence/lan/phase-10-gate.md` has an evidence-backed verdict.
 - [ ] `evidence/public-deployment/owner-gate.md` has all six decisions approved by the Owner in writing.
 - [ ] `evidence/public-deployment/firewall.md` confirms 3000/8000/8188/3389 are blocked from outside.
-- [ ] `evidence/public-deployment/dns-router.md` confirms DNS points to a revalidated IP with no CGNAT blocker.
+- [ ] `deploy/cloudflare/dns-records.md` and the feature-002 external evidence confirm the proxied DNS record and no origin disclosure.
 - [ ] `evidence/public-deployment/tls.md` confirms HTTPS passes with no certificate warnings.
 - [ ] `evidence/public-deployment/auth.md` confirms no job token or other secret leaked into a log.
 - [ ] `evidence/public-deployment/ports.md` confirms every internal port is unreachable from outside.
@@ -609,7 +527,7 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 - [ ] `evidence/operations/runbook-drill.md` traces a Job ID across its full lifecycle.
 - [ ] `evidence/final/mvp-acceptance.md` maps every SC/FR to real evidence.
 - [ ] `evidence/final/constitution-audit.md` has an honest PASS or BLOCKED verdict.
-- [ ] The Phase 11 items have been reported to the Owner (domain, IP type, university border-firewall 443/80/51820 confirmation).
+- [ ] The feature-002 gate items have been reported to the Owner (domain/account, model-license/territory, management path, and written 443/51820 permission).
 
 ## Troubleshooting
 
@@ -627,12 +545,15 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | Duplicate jobs after a restart | An auto-resubmit path exists | Stop at T078; reconcile via `/history` instead of resubmitting |
 | Services do not start after reboot | Dependency order or service identity is wrong | Fix the service definition; starting it by hand is not a pass |
 | A LAN device can reach 8000/8188 | Wrong bind or firewall rule | Stop at T083 immediately — this is a security boundary |
-| `owner-gate.md` still has unapproved items | Not all questions asked, or the Owner hasn't answered yet | Stop at T085; never start T086 before every item is approved |
-| University border firewall won't permit 443/80/51820 to `161.200.90.4` | IT policy hasn't approved it yet, or the request targeted the wrong address | Stop at T089; report to the Owner. Never substitute `161.200.90.3` or another port to work around it. |
+| `owner-gate.md` still has unapproved items | Not all questions asked, or the Owner hasn't answered yet | Stop at the feature-002 gates; never start live setup before T007, T008, T021, and T055 are closed |
+| University border firewall won't permit the required 443/51820 flows to the approved origin | IT policy hasn't approved it yet, or the request targeted the wrong address | Stop at feature-002 T007; report to the Owner. Never substitute the alternate address or another port to work around it. |
 | WireGuard tunnel won't come up between edge and laptop | Border firewall doesn't actually have 51820/udp open, `PersistentKeepalive` missing, or a competing VPN adapter took the default route | See `docs/operations/tunnel-setup.md` Troubleshooting; this is diagnosed at the tunnel layer, never fixed by restarting the web service |
-| A certificate warning or self-signed cert appears | DNS hasn't propagated yet, or the domain is wrong | Stop at T090; never bypass the warning, never deploy while a warning exists |
-| A job token or other secret appears in a captured log | Logging isn't masking sensitive values | Stop at T091 immediately — treat this as a leak and invalidate the affected token or rotate the affected secret |
-| An internal port is reachable from outside during T092 | Firewall rules don't cover it fully | Stop immediately; take the service down until the firewall is fixed |
+| A certificate warning or self-signed cert appears | DNS hasn't propagated yet, or the domain is wrong | Stop at feature-002 T025; never bypass the warning, never deploy while a warning exists |
+| A job token or other secret appears in a captured log | Logging isn't masking sensitive values | Stop at feature-002 T014/T026 immediately — treat this as a leak and invalidate the affected token or rotate the affected secret |
+| An internal port is reachable from outside during feature-002 validation | Firewall rules don't cover it fully | Stop immediately; take the service down until the firewall is fixed |
+| **(feature 003)** Visitor sees Cloudflare's own error page (e.g. a 1033/502/530-style provider page) instead of the application | The approved origin is powered off, or its `cloudflared` connector cannot reach the edge — this is **expected, documented behavior** (FR-025a), not an application fault | Check origin power/network and the connector's own status (`curl -sf http://127.0.0.1:20241/ready` on the origin, per `deploy/cloudflared/README.md`) **before** touching the GPU laptop or any application service. A provider error page with the origin actually healthy means DNS or the tunnel route is misconfigured, not that the app crashed. |
+| **(feature 003)** `/api/v1/health/ready` is `200` but the site shows a generation failure with `engine_unavailable` | `/ready` only reflects startup configuration and never changes afterward; it does not detect a live engine hang | Check `/api/v1/health/engine` instead — it performs a real, short-timeout probe. See `specs/003-outbound-tunnel-entry/spec.md` FR-025 and `apps/api/src/local3d/api/health.py`. |
+| **(feature 003)** GPU laptop won't serve the LAN after a reboot while WireGuard is down | A stale assumption that the web service needs the tunnel to start | This must not happen under feature 003 — `scripts/windows/start_web_service.ps1` starts unconditionally on loopback. If it does happen, `deploy/windows/services/web.xml` may have regressed to a feature-002-style tunnel-address bind; check it against `specs/003-outbound-tunnel-entry/contracts/compute-link.md` C4. |
 
 ## Rollback
 
@@ -655,9 +576,9 @@ Check against [constitution.md](../../.specify/memory/constitution.md) and recor
 | A LAN client can reach an internal port | Project Owner | Report immediately as a security issue |
 | A public-exposure request arrives before Phase 10 PASS | Project Owner | Refuse and cite the constitution/security boundary |
 | The edge server's management access (SSH/console) isn't confirmed working yet | Project Owner / university IT | Say so before running `configure-public-edge.ps1` — that script pre-flight-checks this, but the decision of which management path to use (Stage 0.1 of the deployment plan) must be made first |
-| Any T085 item cannot be answered | Project Owner | Record `BLOCKED` in `owner-gate.md` without touching public infrastructure |
-| A job token or other secret leaks during T091 | Project Owner | Report immediately as a security incident and invalidate the affected token or rotate the affected secret |
-| A public-exposure request arrives before the owner gate passes | Project Owner | Refuse and cite Constitution principle IX plus T085 |
+| Any feature-002 gate item cannot be answered | Project Owner | Record `BLOCKED` in `owner-gate.md` without touching public infrastructure |
+| A job token or other secret leaks during feature-002 validation | Project Owner | Report immediately as a security incident and invalidate the affected token or rotate the affected secret |
+| A public-exposure request arrives before the feature-002 owner gate passes | Project Owner | Refuse and cite Constitution principle IX plus the feature-002 task ledger |
 
 ## History
 

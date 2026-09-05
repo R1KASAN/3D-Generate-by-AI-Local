@@ -29,3 +29,22 @@ async def ready(request: Request) -> JSONResponse:
     if getattr(request.app.state, "adapter_ready", True) is False:
         return JSONResponse(status_code=503, content=health_payload("unavailable"))
     return JSONResponse(status_code=200, content=health_payload("ok"))
+
+
+@router.get("/engine")
+async def engine(request: Request) -> JSONResponse:
+    """Feature 003 FR-025/SC-008: a fast, dedicated liveness probe for the
+    AI engine, distinct from /ready. /ready reports whether the adapter was
+    configured successfully at startup and never changes afterward; this
+    endpoint answers "is the engine reachable right now", which is what
+    detects the spec's Edge Case of an engine that hangs after a healthy
+    startup while the tunnel and web entry remain up. Never exposes an
+    engine identifier, address, or port - only the same safe status shape
+    /ready and /live already use.
+    """
+    job_service = getattr(request.app.state, "job_service", None)
+    if job_service is None or getattr(request.app.state, "adapter_ready", True) is False:
+        return JSONResponse(status_code=503, content=health_payload("unavailable"))
+    if not job_service.adapter.is_live():
+        return JSONResponse(status_code=503, content=health_payload("unavailable"))
+    return JSONResponse(status_code=200, content=health_payload("ok"))

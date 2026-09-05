@@ -73,9 +73,9 @@ Split-host deployment layer over an existing web application. Paths per [plan.md
 
 ### Tests for User Story 1
 
-- [ ] T017 [P] [US1] Write `scripts/verify/test_lan_independence.py` asserting the LAN journey completes with the origin unreachable and WireGuard stopped (SC-006d, SC-016)
-- [ ] T018 [P] [US1] Extend `scripts/verify/test_public_auth.py` for missing, wrong, expired, and cross-job tokens returning responses indistinguishable with respect to job existence, confirming feature 001's per-job capability-token model is unchanged (SC-010, FR-016)
-- [ ] T019 [P] [US1] Extend `scripts/verify/test_external_acceptance.py` with a streaming-only mode asserting no app- or proxy-authored spool or complete-body temp file during maximum-size upload and download (SC-002b)
+- [X] T017 [P] [US1] Write `scripts/verify/test_lan_independence.py` asserting the LAN journey completes with the origin unreachable and WireGuard stopped (SC-006d, SC-016)
+- [X] T018 [P] [US1] Extend `scripts/verify/test_public_auth.py` for missing, wrong, expired, and cross-job tokens returning responses indistinguishable with respect to job existence, confirming feature 001's per-job capability-token model is unchanged (SC-010, FR-016)
+- [X] T019 [P] [US1] Extend `scripts/verify/test_external_acceptance.py` with a streaming-only mode asserting no app- or proxy-authored spool or complete-body temp file during maximum-size upload and download (SC-002b)
 
 ### Implementation
 
@@ -99,20 +99,20 @@ Split-host deployment layer over an existing web application. Paths per [plan.md
 
 ### Probe decision (must precede the contract test)
 
-- [ ] T027 [US2] Decide the GPU/AI-engine layer order per contracts/health-chain.md H2, recording the choice and its probe in `evidence/public-deployment/health-probe-decision.md` (FR-023e) — recommended: adopt the OS-level `nvidia-smi` probe and place GPU above the engine. **This decision is an input to T028**
+- [X] T027 [US2] Decide the GPU/AI-engine layer order per contracts/health-chain.md H2, recording the choice and its probe in `evidence/public-deployment/health-probe-decision.md` (FR-023e) — recommended: adopt the OS-level `nvidia-smi` probe and place GPU above the engine. **This decision is an input to T028**
 
 ### Tests for User Story 2
 
-- [ ] T028 [P] [US2] Write `tests/security/test_health_chain_contract.py` asserting each layer in contracts/health-chain.md H1 is independently probeable and that no layer reports healthy from a downstream layer it did not verify, using the order chosen in T027 (FR-023c, FR-023e)
-- [ ] T029 [P] [US2] Extend `scripts/verify/test_wireguard_reachability.py` to assert binding failure degrades the public path only, leaving the LAN workflow operational (FR-023a, SC-006d)
+- [X] T028 [P] [US2] Write `tests/security/test_health_chain_contract.py` asserting each layer in contracts/health-chain.md H1 is independently probeable and that no layer reports healthy from a downstream layer it did not verify, using the order chosen in T027 (FR-023c, FR-023e)
+- [X] T029 [P] [US2] Extend `scripts/verify/test_wireguard_reachability.py` to assert binding failure degrades the public path only, leaving the LAN workflow operational (FR-023a, SC-006d)
 
 ### Implementation
 
-- [ ] T030 [US2] Implement `scripts/windows/health_chain.ps1` with one independently callable probe per layer the laptop owns: private binding, job service, AI engine, GPU
-- [ ] T031 [US2] Implement the origin-side health probes for provider edge and origin/connector layers, in an OS-independent form per research.md R1
-- [ ] T032 [US2] Implement per-layer recovery per contracts/health-chain.md H4: restart the failed layer first, leave unrelated healthy layers alone, restart a dependent layer only if still unhealthy after its dependency returned plus a grace period, stop after three failures at one layer (FR-024)
-- [ ] T033 [US2] Implement the project-controlled unavailable response for engine-down, binding-down, and job-service-down, returning within five seconds with no internal address, port, hostname, or stack detail (FR-025, SC-008)
-- [ ] T034 [US2] Document that a provider error page means origin-down, not application fault, in `docs/operations/windows-ai-server-runbook.en.md` and its Thai counterpart (FR-025a)
+- [X] T030 [US2] Implement `scripts/windows/health_chain.ps1` with one independently callable probe per layer the laptop owns: private binding, job service, AI engine, GPU
+- [X] T031 [US2] Implement the origin-side health probes for provider edge and origin/connector layers, in an OS-independent form per research.md R1
+- [X] T032 [US2] Implement per-layer recovery per contracts/health-chain.md H4: restart the failed layer first, leave unrelated healthy layers alone, restart a dependent layer only if still unhealthy after its dependency returned plus a grace period, stop after three failures at one layer (FR-024)
+- [X] T033 [US2] Implement the project-controlled unavailable response for engine-down, binding-down, and job-service-down, returning within five seconds with no internal address, port, hostname, or stack detail (FR-025, SC-008)
+- [X] T034 [US2] Document that a provider error page means origin-down, not application fault, in `docs/operations/windows-ai-server-runbook.en.md` and its Thai counterpart (FR-025a)
 - [ ] T035 [US2] Execute the reboot matrix — 3× origin, 3× laptop, and both boot orders with no assumed shared ordering — recording results in `evidence/public-deployment/reboot-matrix.md` (SC-006, SC-006a, SC-006b, FR-023b) [MANUAL]
 - [ ] T036 [US2] Execute the induced-fault matrix from quickstart.md Stage 4, confirming each fault names its own layer (SC-006c) [MANUAL]
 - [ ] T037 [US2] Verify the public path resumes after the binding returns without restarting the application (SC-006e) [MANUAL]

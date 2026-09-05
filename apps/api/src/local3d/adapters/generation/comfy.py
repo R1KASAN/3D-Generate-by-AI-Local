@@ -61,6 +61,19 @@ class ComfyGenerationAdapter:
         future = asyncio.run_coroutine_threadsafe(coro, self._loop)
         return future.result()
 
+    def is_live(self) -> bool:
+        """Delegates to ComfyClient.ping()'s short, dedicated timeout - see
+        that method's docstring for why this must not reuse submit()'s
+        30-second budget. An explicit outer bound is added on top, in case
+        the adapter's own background event loop is itself stuck (ping()'s
+        internal timeout only protects against a slow/unreachable engine,
+        not a wedged event loop)."""
+        try:
+            future = asyncio.run_coroutine_threadsafe(self._client.ping(), self._loop)
+            return future.result(timeout=5.0)
+        except Exception:
+            return False
+
     def submit(self, request: GenerationRequest) -> EngineHandle:
         output_prefix = self._output_prefix_pattern.format(job_id=request.job_id)
         try:

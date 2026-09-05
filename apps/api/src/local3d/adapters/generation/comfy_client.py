@@ -103,6 +103,25 @@ class ComfyClient:
             raise ComfyClientError("ComfyUI returned no uploaded image name")
         return name
 
+    async def ping(self, *, timeout_seconds: float = 4.0) -> bool:
+        """Fast liveness probe, distinct from queue()/submit()/reconcile().
+
+        Those use self._timeout (30s by default), which is appropriate for
+        real generation work but far too slow for a health check: feature
+        003's FR-025/SC-008 require an "AI engine unavailable" response
+        within five seconds, including the case where the engine is fully
+        hung rather than merely unreachable (spec's Edge Cases: "The AI
+        engine hangs while the tunnel and web entry remain healthy"). A
+        short, dedicated timeout here is what makes that budget achievable
+        without waiting on a live job's much longer submission timeout to
+        reveal the same fact.
+        """
+        try:
+            response = await self._http.get("/queue", timeout=timeout_seconds)
+            return response.status_code < 500
+        except (httpx.HTTPError, asyncio.TimeoutError):
+            return False
+
     async def queue(self) -> QueueSnapshot:
         body = await self._get_json("/queue")
         if not isinstance(body, dict):

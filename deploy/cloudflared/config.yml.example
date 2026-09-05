@@ -22,6 +22,18 @@
 tunnel: ${TUNNEL_ID}
 credentials-file: ${TUNNEL_CREDENTIALS}
 
+# Exposes cloudflared's own health endpoints on loopback:
+#   GET /ready        - 200 once the connector has at least one live edge
+#                        connection (the "origin/connector up" health-chain
+#                        layer - contracts/health-chain.md H1)
+#   GET /healthcheck   - basic process liveness
+# This is genuinely OS-independent: `curl -sf http://127.0.0.1:20241/ready`
+# runs unchanged on Windows (curl.exe ships with Windows 10+), Linux, and
+# macOS, so the origin's health probe does not need to wait on OS
+# confirmation the way the service-manager unit in services/ does. See
+# specs/003-outbound-tunnel-entry/research.md R1.
+metrics: 127.0.0.1:20241
+
 # No inbound port is opened by this process. All traffic arrives over the
 # outbound-initiated tunnel connection only (FR-003).
 ingress:

@@ -35,6 +35,19 @@ This directory holds the **outbound** Cloudflare Tunnel connector configuration 
 4. Restart the `cloudflared` service. The **same public hostname** MUST come back without any inbound service being exposed at any point in this procedure.
 5. Record the rotation in the project's operational log per FR-027 (no credential material in the log — only that a rotation occurred and when).
 
+## Health probes (T031)
+
+The origin owns two layers of `contracts/health-chain.md` H1: **provider edge reachable** and **approved origin + connector up**. Both are answered by `cloudflared`'s own metrics endpoint, enabled in `config.yml.example` via `metrics: 127.0.0.1:20241`:
+
+```
+curl -sf http://127.0.0.1:20241/ready       # 200 once the connector has a live edge connection
+curl -sf http://127.0.0.1:20241/healthcheck # basic process liveness
+```
+
+This is deliberately **not** a PowerShell or shell script: `curl` ships unmodified on Windows 10+, Linux, and macOS, so this probe works regardless of what physical inspection eventually finds the origin's OS to be (research.md R1). A monitoring/health-chain caller on the origin invokes the same two commands whether that caller ends up being a scheduled task, a systemd timer, or something else — only the *caller* is OS-specific and provisional; the probe itself is not.
+
+A non-200 `/ready` means the connector cannot currently reach Cloudflare's edge — this is exactly the origin-down condition FR-025a and SC-008a describe, and should surface as the `origin_connector` layer in the health chain, not as a generic failure.
+
 ## What is deliberately absent
 
 No `Caddyfile`, no TLS certificate, and no client-CA trust store belong in this directory. Those concerns live in `deploy/caddy/` and, under the outbound design, the origin holds none of the certificate material feature 002 required — see `contracts/origin-entry.md` O2 for the full list of what was removed and why.

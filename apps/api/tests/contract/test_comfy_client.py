@@ -264,3 +264,47 @@ async def test_upload_image_rejects_missing_name_in_response() -> None:
             await client.upload_image(Path(__file__))
     finally:
         await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ping_returns_true_when_engine_responds() -> None:
+    client = _client(httpx.MockTransport(lambda _request: httpx.Response(200, json={"queue_running": []})))
+    try:
+        assert await client.ping() is True
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ping_returns_false_on_connection_error_not_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise httpx.ConnectError("connection refused")
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        assert await client.ping() is False
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ping_returns_false_on_timeout_not_raises() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise httpx.ReadTimeout("engine hung")
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        assert await client.ping() is False
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_ping_returns_false_on_server_error() -> None:
+    client = _client(httpx.MockTransport(lambda _request: httpx.Response(500)))
+    try:
+        assert await client.ping() is False
+    finally:
+        await client.aclose()

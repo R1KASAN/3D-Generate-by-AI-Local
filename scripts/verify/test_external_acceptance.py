@@ -1,4 +1,4 @@
-"""Full external generation flow against the public endpoint (T094).
+"""Full external generation flow against the public endpoint (feature-002 T026).
 
 Uploads a real image to the public hostname, polls status with the
 returned X-Job-Token until the job completes, downloads the result, and
@@ -9,6 +9,15 @@ the file on the GPU laptop's storage directory), the downloaded GLB's hash
 is compared against it - this is the strongest available proof that what
 the external user received is bit-for-bit the file the laptop actually
 generated, not a truncated or corrupted transfer through the edge/tunnel.
+
+--streaming-check-dir (feature-003 T019, SC-002b) adds a snapshot-diff
+check around the same upload/download: it records the approved origin's
+proxy working/temp directory contents before the flow and after, and fails
+if any new file appears - the origin must relay bodies as a stream and must
+never spool an upload or a generated artifact to disk. This only makes
+sense when run with filesystem access to the origin (e.g. by the operator,
+alongside this otherwise-external test), so it is BLOCKED, not skipped,
+when the directory is not supplied.
 """
 
 from __future__ import annotations
@@ -45,13 +54,21 @@ def main() -> int:
     parser.add_argument("--confirm-off-campus", action="store_true")
     parser.add_argument("--expected-sha256", default=None)
     parser.add_argument("--max-wait-seconds", type=int, default=1800)
+    parser.add_argument("--streaming-check-dir", type=Path, default=None, help="origin proxy working/temp directory to snapshot before and after the flow (SC-002b)")
     parser.add_argument("--evidence", type=Path, default=Path("evidence/public-deployment/full-flow.md"))
     args = parser.parse_args()
     base = f"https://{args.hostname}"
 
+    def _snapshot(directory: Path | None) -> set[str] | None:
+        if directory is None or not directory.exists():
+            return None
+        return {str(p.relative_to(directory)) for p in directory.rglob("*") if p.is_file()}
+
+    streaming_before = _snapshot(args.streaming_check_dir)
+
     if not args.confirm_off_campus:
         checks = [Check("vantage-point", "--confirm-off-campus was not supplied", "run from outside the university network", "BLOCKED")]
-        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T094", [f"- Hostname: {args.hostname}"], checks, "BLOCKED")
+        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T026", [f"- Hostname: {args.hostname}"], checks, "BLOCKED")
         print(f"BLOCKED: acceptance evidence written to {args.evidence}")
         return 1
     if not args.image.is_file():
@@ -70,7 +87,7 @@ def main() -> int:
         checks.append(Check("create-job", "HTTP 201, job created", "job accepted", "PASS"))
     except Exception as exc:  # noqa: BLE001
         checks.append(Check("create-job", f"failed with {type(exc).__name__}", "job accepted", "FAIL"))
-        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T094", [f"- Hostname: {args.hostname}"], checks, "FAIL")
+        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T026", [f"- Hostname: {args.hostname}"], checks, "FAIL")
         print(f"FAIL: acceptance evidence written to {args.evidence}")
         return 1
 
@@ -87,7 +104,7 @@ def main() -> int:
     completed = bool(status) and status.get("status") == "completed"
     checks.append(Check("job-completes", f"final status={status.get('status') if status else 'timeout'}", "status reaches completed", "PASS" if completed else "FAIL"))
     if not completed:
-        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T094", [f"- Hostname: {args.hostname}"], checks, "FAIL")
+        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T026", [f"- Hostname: {args.hostname}"], checks, "FAIL")
         print(f"FAIL: acceptance evidence written to {args.evidence}")
         return 1
 
@@ -115,11 +132,23 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         checks.append(Check("download", f"failed with {type(exc).__name__}", "downloads successfully", "FAIL"))
 
+    if streaming_before is None:
+        checks.append(Check("no-spooled-request-response-body", "--streaming-check-dir not supplied", "no new file appears in the origin's proxy working/temp directory during the flow", "BLOCKED"))
+    else:
+        streaming_after = _snapshot(args.streaming_check_dir) or set()
+        new_files = streaming_after - streaming_before
+        checks.append(Check(
+            "no-spooled-request-response-body",
+            f"{len(new_files)} new file(s): {', '.join(sorted(new_files)) or 'none'}",
+            "no new file appears - the origin streams, it never spools an upload or artifact to disk",
+            "PASS" if not new_files else "FAIL",
+        ))
+
     verdict = overall_verdict(checks)
     write_evidence(
         args.evidence,
         "External Acceptance Flow Evidence",
-        "T094",
+        "T026",
         [f"- Hostname: {args.hostname}"],
         checks,
         verdict,
