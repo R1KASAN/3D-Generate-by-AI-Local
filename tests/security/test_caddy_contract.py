@@ -109,6 +109,29 @@ def test_listener_is_loopback_only() -> None:
     assert not re.search(r"(?<!127\.0\.0\.)1\b::(?!\w)", text)
 
 
+def test_bare_port_site_address_is_paired_with_a_loopback_bind() -> None:
+    """A site address written as ':8443' listens on every interface unless a
+    `bind` directive narrows it. The Caddyfile uses the bare form on purpose -
+    keying the block on `http://127.0.0.1:8443` also makes 127.0.0.1 a
+    Host-header matcher, so every request the connector forwards (carrying the
+    public hostname in Host) falls through unmatched and returns an empty 200.
+    That is invisible to a local curl and would surface only at cutover.
+    Since the bare form is required, `bind 127.0.0.1` is what keeps FR-004
+    true, and its absence must fail loudly rather than silently open the
+    listener to the network."""
+    text = _directives_only(_read_caddyfile())
+    bare_ports = re.findall(r"(?m)^\s*(:\d+)\s*\{", text)
+    if bare_ports:
+        assert re.search(r"(?m)^\s*bind\s+127\.0\.0\.1\s*$", text), (
+            f"site address(es) {bare_ports} listen on all interfaces without "
+            "a 'bind 127.0.0.1' directive - that would expose the pass-through "
+            "beyond loopback (FR-004)"
+        )
+        assert not re.search(r"(?m)^\s*bind\s+(?!127\.0\.0\.1\s*$)", text), (
+            "the only permitted bind address for the pass-through is 127.0.0.1"
+        )
+
+
 def test_upstream_is_tunnel_address_only() -> None:
     raw = _read_caddyfile()
     directives = _directives_only(raw)
@@ -239,9 +262,19 @@ def test_origin_correlation_and_all_response_cache_policy():
 
 
 def test_proxy_matches_connector_and_quickstart_port():
+    """The connector's ingress target and the quickstart's Quick Tunnel command
+    must both point at the port Caddy actually listens on. The endpoint is
+    composed from the bare site address plus its `bind` directive rather than
+    read from a single `http://127.0.0.1:PORT` token, because keying the site
+    block on the loopback host also made it a Host-header matcher and broke
+    every forwarded request."""
     text = _directives_only(_read_caddyfile())
     config = (REPO_ROOT / 'deploy/cloudflared/config.yml.example').read_text(encoding='utf-8')
     quickstart = (REPO_ROOT / 'specs/003-outbound-tunnel-entry/quickstart.md').read_text(encoding='utf-8')
-    endpoint = re.search(r'http://127\.0\.0\.1:\d+', text).group()
-    assert endpoint in config
-    assert f'--url {endpoint}' in quickstart
+    port_match = re.search(r'(?m)^\s*:(\d+)\s*\{', text)
+    assert port_match, 'no bare-port site address found in the Caddyfile'
+    bind_match = re.search(r'(?m)^\s*bind\s+(\S+)\s*$', text)
+    assert bind_match, 'the site block must declare an explicit bind address'
+    endpoint = f'http://{bind_match.group(1)}:{port_match.group(1)}'
+    assert endpoint in config, f'{endpoint} missing from the cloudflared ingress config'
+    assert f'--url {endpoint}' in quickstart, f'{endpoint} missing from the quickstart Quick Tunnel command'
