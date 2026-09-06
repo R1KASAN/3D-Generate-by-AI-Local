@@ -240,6 +240,36 @@ def test_job_token_deleted_from_the_error_log_too() -> None:
     )
 
 
+def test_maintenance_root_is_configurable_not_a_hardcoded_unix_path() -> None:
+    """FR-025/SC-008 require a project-controlled unavailable page. The page
+    exists at deploy/caddy/maintenance/maintenance.html, but the Caddyfile used
+    to hardcode the absolute Unix path /srv/caddy/maintenance as its root.
+
+    Found live on 2026-09-06: on a host where that directory does not exist,
+    file_server 404s inside handle_errors and the visitor receives a bare
+    504 with Content-Length 0 instead of the project page - FR-025 silently
+    unsatisfied with nothing failing. The approved origin's OS is still
+    PENDING TARGET INSPECTION, so neither platform's layout may be hardcoded;
+    the root must come from an environment placeholder the operator sets."""
+    text = _directives_only(_read_caddyfile())
+    roots = re.findall(r"(?m)^\s*root\s+\*\s+(\S+)", text)
+    assert roots, "handle_errors must serve a maintenance root"
+    for root in roots:
+        assert root.startswith("{$"), (
+            f"maintenance root {root!r} is hardcoded - it must be an environment "
+            "placeholder so an origin whose filesystem layout differs still serves "
+            "the FR-025 page instead of degrading to an empty error"
+        )
+    page = REPO_ROOT / "deploy" / "caddy" / "maintenance" / "maintenance.html"
+    assert page.is_file(), "the project-controlled maintenance page must exist in the repo"
+    body = page.read_text(encoding="utf-8")
+    for leak in ("127.0.0.1", "10.10.0.2", "8443", "8000", "8188", "cloudflared", "Caddy"):
+        assert leak not in body, (
+            f"the maintenance page must not disclose {leak!r} - FR-025 forbids naming "
+            "any internal address, port, hostname or stack detail"
+        )
+
+
 def test_admin_api_disabled() -> None:
     text = _read_caddyfile()
     assert re.search(r"(?m)^\s*admin\s+off\s*$", text), "Caddy's admin API must be disabled (`admin off`)."

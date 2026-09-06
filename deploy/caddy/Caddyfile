@@ -20,6 +20,12 @@
 # Required environment (see .env.example):
 #   UPSTREAM_ORIGIN   - http://10.10.0.2:3000
 #   CADDY_LOG_PATH    - optional override for the access-log path
+#   CADDY_MAINTENANCE_ROOT - directory holding maintenance.html. MUST be set
+#                     on any origin where /srv/caddy/maintenance does not
+#                     exist, or FR-025's project-controlled unavailable page
+#                     silently degrades to a bare empty 504 (found live
+#                     2026-09-06). The origin OS is unverified, so this
+#                     cannot be hardcoded to either platform's layout.
 #
 # Policy invariants:
 #   - no site-wide login; job resources use per-job capability tokens
@@ -119,7 +125,7 @@
 			}
 			@unavailable status 3xx 4xx 5xx
 			handle_response @unavailable {
-				root * /srv/caddy/maintenance
+				root * {$CADDY_MAINTENANCE_ROOT:/srv/caddy/maintenance}
 				rewrite * /maintenance.html
 				header Retry-After "30"
 				file_server {
@@ -160,7 +166,7 @@
 		}
 		@upstreamDown expression {http.error.status_code} in [502, 503, 504]
 		handle @upstreamDown {
-			root * /srv/caddy/maintenance
+			root * {$CADDY_MAINTENANCE_ROOT:/srv/caddy/maintenance}
 			rewrite * /maintenance.html
 			file_server
 			header Retry-After "30"
