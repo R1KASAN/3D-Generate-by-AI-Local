@@ -308,3 +308,122 @@ async def test_ping_returns_false_on_server_error() -> None:
         assert await client.ping() is False
     finally:
         await client.aclose()
+
+
+# --- Bounded retries for transient status-poll timeouts ---------------------
+#
+# ComfyUI serves its HTTP API from the process running the graph, so a heavy
+# GPU step can stall a status read while the generation is progressing fine.
+# Observed live 2026-09-06: jobs died at 125s and 194s while others on the
+# same engine completed at 240s and 306s, so duration was never the cause -
+# a single stalled poll was. These tests pin the retry budget, that only
+# timeouts are retried, and that an exhausted budget still fails exactly as
+# it did before.
+
+
+def _timeout_then_success(timeouts: int, body: dict[str, Any]) -> tuple[httpx.MockTransport, list[int]]:
+    """Transport that raises ReadTimeout `timeouts` times, then succeeds.
+    Returns the transport and a one-element call counter."""
+    calls = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        calls[0] += 1
+        if calls[0] <= timeouts:
+            raise httpx.ReadTimeout("engine busy")
+        return httpx.Response(200, json=body)
+
+    return httpx.MockTransport(handler), calls
+
+
+@pytest.mark.asyncio
+async def test_one_transient_status_timeout_is_retried_and_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ComfyClient, "STATUS_POLL_BACKOFF_SECONDS", (0.0, 0.0))
+    transport, calls = _timeout_then_success(1, {"queue_running": [], "queue_pending": []})
+    client = _client(transport)
+    try:
+        snapshot = await client.queue()
+    finally:
+        await client.aclose()
+    assert snapshot.running == 0 and snapshot.pending == 0
+    assert calls[0] == 2, "the stalled poll must be retried exactly once before succeeding"
+
+
+@pytest.mark.asyncio
+async def test_two_transient_status_timeouts_are_retried_and_succeed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(ComfyClient, "STATUS_POLL_BACKOFF_SECONDS", (0.0, 0.0))
+    transport, calls = _timeout_then_success(2, {"queue_running": [], "queue_pending": []})
+    client = _client(transport)
+    try:
+        snapshot = await client.queue()
+    finally:
+        await client.aclose()
+    assert snapshot.pending == 0
+    assert calls[0] == 3, "two stalls must both be retried within the budget"
+
+
+@pytest.mark.asyncio
+async def test_exhausted_status_retries_keep_the_existing_timeout_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Once the budget is spent the caller must see exactly the observation it
+    saw before this retry existed - an engine that has genuinely stopped
+    answering still fails, it is not retried forever."""
+    monkeypatch.setattr(ComfyClient, "STATUS_POLL_BACKOFF_SECONDS", (0.0, 0.0))
+    calls = [0]
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        calls[0] += 1
+        raise httpx.ReadTimeout("engine hung")
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        observation = await client.reconcile(
+            type("Handle", (), {"internal_id": "engine-secret-123"})()
+        )
+    finally:
+        await client.aclose()
+
+    assert observation.status is JobObservationStatus.UNKNOWN
+    assert observation.error_code == "generation_timeout"
+    assert observation.safe_message == "Generation status is unavailable"
+    assert calls[0] == ComfyClient.STATUS_POLL_RETRIES + 1, (
+        "the budget must be bounded - three total reads, then fail"
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_404_is_not_retried_as_if_it_were_a_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only timeouts are transient. A history 404 is a real answer meaning the
+    prompt is not in history yet, and retrying it would waste the budget and
+    delay the queue-membership fallback."""
+    monkeypatch.setattr(ComfyClient, "STATUS_POLL_BACKOFF_SECONDS", (0.0, 0.0))
+    calls = {"history": 0, "queue": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/history/"):
+            calls["history"] += 1
+            return httpx.Response(404)
+        calls["queue"] += 1
+        return httpx.Response(
+            200,
+            json={"queue_running": [[1, "engine-secret-123", {}, {}, "c"]], "queue_pending": []},
+        )
+
+    client = _client(httpx.MockTransport(handler))
+    try:
+        observation = await client.reconcile(
+            type("Handle", (), {"internal_id": "engine-secret-123"})()
+        )
+    finally:
+        await client.aclose()
+
+    assert observation.status is JobObservationStatus.PROCESSING
+    assert calls["history"] == 1, "a 404 must be accepted on the first response, not retried"

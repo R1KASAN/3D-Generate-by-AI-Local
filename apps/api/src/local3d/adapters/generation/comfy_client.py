@@ -38,6 +38,16 @@ WebSocketConnect = Callable[..., Any]
 class ComfyClient:
     """Loopback-only ComfyUI client; engine identifiers stay adapter-private."""
 
+    #: Extra status-read attempts after the first, for transient read timeouts
+    #: only (see `_get_json`). Two is deliberate: it absorbs the single-poll
+    #: stalls seen under GPU load without masking an engine that has actually
+    #: stopped answering, which must still fail.
+    STATUS_POLL_RETRIES = 2
+
+    #: Bounded backoff before each retry. Indexed by the completed attempt,
+    #: so it must hold at least STATUS_POLL_RETRIES entries.
+    STATUS_POLL_BACKOFF_SECONDS = (0.5, 1.5)
+
     def __init__(
         self,
         base_url: str = "http://127.0.0.1:8188",
@@ -227,18 +237,51 @@ class ComfyClient:
         )
 
     async def _get_json(self, path: str) -> Any:
-        try:
-            response = await self._http.get(path, timeout=self._timeout)
-            if response.status_code == 404:
-                raise ComfyClientError("ComfyUI resource was not found", code="not_found")
-            response.raise_for_status()
-            return response.json()
-        except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as exc:
-            raise ComfyClientError("ComfyUI request timed out", code="generation_timeout") from exc
-        except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
-            raise ComfyClientError("ComfyUI connection failed", code="engine_disconnect") from exc
-        except (httpx.HTTPError, ValueError) as exc:
-            raise ComfyClientError("ComfyUI request failed") from exc
+        """Read a ComfyUI status resource, retrying transient read timeouts.
+
+        ComfyUI serves its HTTP API from the same process that runs the
+        graph, so a heavy GPU step can stall the status endpoint for tens of
+        seconds while the generation itself is progressing normally. Treating
+        the first stalled poll as terminal discarded real in-flight work:
+        observed live on 2026-09-06, where jobs died at 125s and 194s while
+        others on the same engine completed at 240s and 306s - proving the
+        generation duration was never the problem, the status read was.
+
+        Only read timeouts are retried, and only STATUS_POLL_RETRIES times
+        with bounded backoff. Every other outcome keeps its existing meaning:
+        a 404 is still `not_found` on the first response, a refused socket is
+        still `engine_disconnect`, and an exhausted retry budget still raises
+        exactly the `generation_timeout` error the caller handled before, so
+        terminal behaviour is unchanged once the engine is genuinely gone.
+
+        Retries happen entirely inside one status read, so no observation is
+        emitted between them: the job stays in its current state and no new
+        generation attempt is started (`attempt_count` is only advanced at
+        submission). Worst case latency is bounded at
+        (STATUS_POLL_RETRIES + 1) x timeout plus the backoff sum.
+        """
+        last_timeout: Exception | None = None
+        for attempt in range(self.STATUS_POLL_RETRIES + 1):
+            try:
+                response = await self._http.get(path, timeout=self._timeout)
+                if response.status_code == 404:
+                    raise ComfyClientError("ComfyUI resource was not found", code="not_found")
+                response.raise_for_status()
+                return response.json()
+            except (httpx.ReadTimeout, httpx.ConnectTimeout, asyncio.TimeoutError) as exc:
+                last_timeout = exc
+                if attempt < self.STATUS_POLL_RETRIES:
+                    await asyncio.sleep(self.STATUS_POLL_BACKOFF_SECONDS[attempt])
+                    continue
+                break
+            except (httpx.ConnectError, httpx.RemoteProtocolError) as exc:
+                raise ComfyClientError("ComfyUI connection failed", code="engine_disconnect") from exc
+            except (httpx.HTTPError, ValueError) as exc:
+                raise ComfyClientError("ComfyUI request failed") from exc
+
+        raise ComfyClientError(
+            "ComfyUI request timed out", code="generation_timeout"
+        ) from last_timeout
 
 
 def _validate_loopback_url(base_url: str) -> str:
