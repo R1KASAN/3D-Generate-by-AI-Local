@@ -27,6 +27,36 @@
 #   - request and response bodies are never buffered to disk
 {
 	admin off
+
+	# The site-level `log` block below filters the ACCESS logger only, and it
+	# writes to a file. Caddy's error logger is a separate logger that writes
+	# to stderr through this default logger, and it serializes the entire
+	# request - headers included. Without the filter here, a single upstream
+	# error (a 504 from the engine health gate is enough) writes the caller's
+	# X-Job-Token to stderr in plaintext, which FR-017 and SC-009 forbid for
+	# every project-controlled log, not just the access log.
+	#
+	# Verified live on 2026-09-06 through a real public tunnel: before this
+	# block the token appeared 3 times in Caddy's stderr while the access log
+	# correctly held 0; after it, an identical induced 504 logged 0 times and
+	# the error entry kept its diagnostic fields.
+	log default {
+		output stderr
+		format filter {
+			wrap console
+			fields {
+				request>headers>X-Job-Token delete
+				request>headers>Cookie delete
+				request>headers>Authorization delete
+				request>headers delete
+				request>uri delete
+				request>host delete
+				request>remote_ip delete
+				request>client_ip delete
+				resp_headers delete
+			}
+		}
+	}
 }
 
 :8443 {

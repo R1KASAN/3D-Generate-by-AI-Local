@@ -211,6 +211,35 @@ def test_job_token_deleted_from_access_log() -> None:
     )
 
 
+def test_job_token_deleted_from_the_error_log_too() -> None:
+    """SC-009 says the token must appear in ZERO project-controlled logs, not
+    zero access logs. Caddy's error logger is a separate logger that writes to
+    stderr and serializes the whole request, headers included - so the site
+    block's access-log filter does not cover it.
+
+    Found live on 2026-09-06: a single engine-health-gate 504 wrote a real
+    X-Job-Token to stderr in cleartext three times while the access log
+    correctly held zero. The global `log default` block is what closes that
+    hole, so its absence must fail here rather than at the next incident."""
+    text = _read_caddyfile()
+    global_log = re.search(r"(?ms)^\{.*?^\t*log\s+default\s*\{(.*?)^\t\}", text)
+    assert global_log, (
+        "the global options block must define `log default` - without it "
+        "Caddy's error logger writes unfiltered request headers to stderr"
+    )
+    block = global_log.group(1)
+    assert "format filter" in block, "the default logger must use `format filter`"
+    for field in ("X-Job-Token", "Cookie", "Authorization"):
+        assert re.search(rf"request>headers>{field}\s+delete", block), (
+            f"the default (error) logger must delete request>headers>{field}"
+        )
+    assert re.search(r"request>headers\s+delete", block), (
+        "the default (error) logger must delete the whole request>headers object - "
+        "deleting only the three known credential headers still leaks any header "
+        "a future change starts carrying"
+    )
+
+
 def test_admin_api_disabled() -> None:
     text = _read_caddyfile()
     assert re.search(r"(?m)^\s*admin\s+off\s*$", text), "Caddy's admin API must be disabled (`admin off`)."
