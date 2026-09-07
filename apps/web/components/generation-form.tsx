@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 
-import { createJob, JobCreated } from "../lib/api/jobs";
+import { createJob, JobCreated, userFacingJobError } from "../lib/api/jobs";
 
 interface GenerationFormProps {
   onCreated: (job: JobCreated) => void;
@@ -19,13 +19,21 @@ export function GenerationForm({ onCreated }: GenerationFormProps) {
       setError("Choose a JPEG or PNG image first.");
       return;
     }
+    if (!(["image/jpeg", "image/png"] as string[]).includes(file.type)) {
+      setError("Choose a JPEG or PNG image first.");
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      setError("Images must be 10 MiB or smaller.");
+      return;
+    }
     setSubmitting(true);
     setError(null);
     try {
       const created = await createJob(file);
       onCreated(created);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Generation could not be started.");
+      setError(userFacingJobError(caught, "Generation could not be started."));
     } finally {
       setSubmitting(false);
     }

@@ -2,9 +2,9 @@
 <service>
   <id>Local3D-Web</id>
   <name>Local 3D Web</name>
-  <description>Private loopback Next.js frontend for local 3D generation.</description>
-  <executable>C:\Program Files\nodejs\node.exe</executable>
-  <arguments>node_modules\next\dist\bin\next start --hostname 127.0.0.1 --port 3000</arguments>
+  <description>Next.js frontend for local 3D generation, bound to loopback only.</description>
+  <executable>C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe</executable>
+  <arguments>-NoLogo -NonInteractive -NoProfile -ExecutionPolicy Bypass -File "%BASE%\..\..\..\scripts\windows\start_web_service.ps1" -Port 3000</arguments>
   <workingdirectory>%BASE%\..\..\..\apps\web</workingdirectory>
   <startmode>Automatic</startmode>
   <stoptimeout>30 sec</stoptimeout>

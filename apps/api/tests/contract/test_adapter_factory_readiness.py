@@ -75,6 +75,7 @@ def test_comfyui_adapter_with_valid_manifest_is_ready(tmp_path: Path) -> None:
     manifest_path.write_text(
         json.dumps(
             {
+                "workflow_revision": "contract-rev-1",
                 "api_workflow_path": "workflow.json",
                 "api_workflow_sha256": hashlib.sha256(workflow_path.read_bytes()).hexdigest(),
                 "input_bindings": ["1.image"],
@@ -92,6 +93,7 @@ def test_comfyui_adapter_with_valid_manifest_is_ready(tmp_path: Path) -> None:
         response = client.get("/api/v1/health/ready")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+        assert client.app.state.job_service.workflow_revision == "contract-rev-1"
 
 
 def test_comfyui_adapter_with_no_live_engine_is_ready_but_not_live(tmp_path: Path) -> None:

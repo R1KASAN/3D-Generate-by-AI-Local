@@ -1,209 +1,189 @@
 <!--
 Sync Impact Report
-- Version change: template → 1.0.0
-- Added principles: Smallest Verified Vertical Slice; Evidence-Gated Completion;
-  Security and Private-Service Boundary; Job and File Isolation; Single-GPU Queue
+- Version change: 1.2.0 -> 2.0.0
+- Bump rationale: MAJOR. The former governance permitted a separate public edge
+  and direct HTTPS ingress architecture. This version replaces that model with
+  one Notebook/PC and an outbound-only Cloudflare Tunnel boundary.
+- Modified principles:
+  - I. Smallest Verified Vertical Slice + X. Scope and Simplicity
+    -> I. Single-Node Architecture
+  - III. Security and Private-Service Boundary
+    -> II. Outbound-Only Public Connectivity, III. Local Service Isolation,
+       and V. Security and Secrets
+  - IV. Job and File Isolation + V. Single-GPU Queue Correctness
+    -> VI. Reliability and Resource Control
+  - II. Evidence-Gated Completion + VIII. Test-First Critical Behavior
+    -> VII. Testing and Observability
+  - VI. Replaceable Integration Boundary
+    -> VI. Reliability and Resource Control
+  - VII. Cross-Platform Development Discipline
+    -> Development Workflow and Quality Gates
+  - IX. Ownership-Critical Decisions + X. Scope and Simplicity
+    -> VIII. Scope Control and Governance
+- Added principle: IV. Environment Separation.
+- Removed standalone principle headings: Smallest Verified Vertical Slice;
+  Evidence-Gated Completion; Job and File Isolation; Single-GPU Queue
   Correctness; Replaceable Integration Boundary; Cross-Platform Development
-  Discipline; Test-First Critical Behavior; Ownership-Critical Decisions; Scope
-  and Simplicity.
-- Added sections: Security and Operational Constraints; Development Workflow and
-  Quality Gates.
-- Removed sections: none.
-- Follow-up TODOs: none.
-
-Sync Impact Report (1.0.0 -> 1.1.0, 2026-09-04)
-- Version change: 1.0.0 -> 1.1.0 (MINOR: materially expanded Principle III)
-- Amended principles: III. Security and Private-Service Boundary - the
-  shared-authentication/IP-allowlisting/VPN mandate for public deployment is
-  replaced with an explicit either/or: (a) owner-approved shared
-  authentication/IP allowlisting/VPN, or (b) an owner-approved per-resource
-  capability-token policy with no site-wide login, provided the token is
-  never logged and forwarding/verification is evidenced. Also clarifies that
-  a private point-to-point tunnel used solely to reach a mobile compute node
-  that is never itself the public entry point (e.g. the edge-to-GPU-worker
-  WireGuard link in the public-deployment plan) is an internal binding under
-  this principle, not "VPN access to the deployment" - the internal ports it
-  carries MUST still never be publicly reachable.
-- Rationale: the owner approved a public-entry policy of "no site-wide login,
-  per-job X-Job-Token only" on 2026-09-04 (see
-  evidence/public-deployment/owner-gate.md), which the prior wording of
-  Principle III did not permit. This amendment brings the constitution into
-  agreement with that written approval instead of leaving a standing
-  contradiction between the two documents.
-- Affected artifacts: evidence/public-deployment/owner-gate.md (references
-  this version); specs/001-local-3d-generation/tasks.md (T097 constitution
-  audit checks against this version); docs/operations/public-cutover.md.
-- Follow-up TODOs: none - this is a completed amendment, not a placeholder.
-
-Sync Impact Report (1.1.0 -> 1.2.0, 2026-09-05)
-- Version change: 1.1.0 -> 1.2.0 (MINOR: materially expanded Principle III)
-- Amended principles: III. Security and Private-Service Boundary - the
-  absolute "token is never written to logs" clause is scoped to logs the
-  project controls or configures, and a new paragraph recognises that an
-  owner-approved TLS-terminating third-party proxy necessarily handles the
-  credential in cleartext. That residual exposure is permitted only under
-  four conjunctive conditions (written owner approval; provider-side
-  credential logging disabled wherever that control exists; the exposure
-  recorded in security evidence naming the provider; encrypted AND
-  certificate-validated proxy-to-origin hop), and the project is forbidden
-  from claiming end-to-end non-logging while such a proxy is in the path.
-- Rationale: /speckit-analyze finding N1 against feature
-  002-cloudflare-public-entry. The owner selected a proxied public entry on
-  2026-09-05 in which Cloudflare terminates TLS at the edge. Under the prior
-  absolute wording that architecture could not comply, because the provider's
-  logging behaviour is outside project control. Rather than reinterpret the
-  principle or ignore the conflict, the clause is scoped to what the project
-  can actually govern, and the residual is made explicit, bounded, and
-  evidenced. The prohibition on overclaiming is deliberate: the honest
-  statement is narrower than the one the old wording invited.
-- Affected artifacts: specs/002-cloudflare-public-entry/spec.md (FR-011,
-  FR-011a, SC-006, SC-006a); specs/002-cloudflare-public-entry/plan.md
-  (Constitution Check); specs/002-cloudflare-public-entry/tasks.md (T009,
-  T014, T053); evidence/public-deployment/owner-gate.md;
-  evidence/public-deployment/residual-exposure.md (new).
+  Discipline; Test-First Critical Behavior; Ownership-Critical Decisions; and
+  Scope and Simplicity. Applicable requirements are consolidated above.
+- Added sections: none.
+- Removed sections: none; both non-governance sections were retained and
+  rewritten for the approved architecture.
+- Downstream review required: existing specifications, plans, tasks, evidence,
+  and operations documents that describe a separate edge server, direct public
+  ingress, custom DNS, or a different trust boundary MUST be reconciled before
+  their next implementation or deployment use.
 - Follow-up TODOs: none.
 -->
 
-# Local 3D Generative AI Server Constitution
+# 3D Generate by AI Local Constitution
 
 ## Core Principles
 
-### I. Smallest Verified Vertical Slice
+### I. Single-Node Architecture
 
-Work MUST advance through independently testable slices: browser mock flow,
-sample-GLB viewer, mock backend, local AI validation, API integration, LAN
-validation, then protected Internet deployment. MVP work MUST NOT expand into
-payment, Kubernetes, Redis, microservices, cloud GPU, multi-GPU, autoscaling,
-mobile apps, or object storage. This keeps the product focused on a usable,
-verifiable generation loop.
+The AI Notebook/PC MUST be the sole project server, reverse-proxy host, API
+host, ComfyUI host, storage host, and GPU compute node. Its assigned network IP
+is `161.200.90.4`. The approved topology MUST NOT contain a separate edge
+server, gateway server, cloud compute node, second application server, or
+remote GPU worker. Adding any such component requires prior architecture
+approval under Principle VIII. One node is the governing constraint because it
+matches the available hardware and prevents unsupported operational complexity.
 
-### II. Evidence-Gated Completion
+### II. Outbound-Only Public Connectivity
 
-No task, phase, or release MAY be marked complete without recorded verification.
-Evidence MUST be appropriate to the work: automated tests, type/lint/build
-checks, runtime evidence, or explicit manual verification. Hardware-dependent
-claims remain blocked until verified on the target Windows NVIDIA server; task
-checkboxes and historical documents alone are not evidence.
+All public access MUST pass through Cloudflare Tunnel. `cloudflared` MUST run on
+the Notebook and initiate the connection outbound to Cloudflare; no Internet
+client may connect directly to `161.200.90.4`. The architecture MUST NOT require
+inbound Internet access to ports `3000`, `8000`, `8080`, or `8188`, and firewall
+or routing changes MUST NOT expose those ports publicly. A passing deployment
+check MUST demonstrate that the application works through the Tunnel without
+direct origin ingress.
 
-### III. Security and Private-Service Boundary
+### III. Local Service Isolation
 
-HTTPS on port 443 is the sole Internet-facing application entry point; port 80
-is permitted only for redirect or certificate issuance. Frontend, backend, AI
-workflow engine, database, and remote-administration ports MUST NOT be publicly
-reachable. Browsers MUST call the backend only, never the AI workflow engine.
-Public deployment requires one of the following, owner-approved in writing:
-(a) shared authentication, IP allowlisting, or VPN access; or (b) a
-per-resource capability-token policy with no site-wide login, where the
-token is never written to any log the project controls or configures, and
-its issuance/verification behavior is evidenced (e.g. uniform 404 for
-missing/wrong tokens). "Controls or configures" covers every log produced
-by a project-operated component - reverse proxy, application, and any
-project-run intermediary - and also any third-party log whose content the
-project can suppress through available configuration; where such a control
-exists the project MUST use it.
+Frontend, Caddy, FastAPI, and ComfyUI MUST communicate through loopback or an
+explicitly approved private interface. Caddy at `127.0.0.1:8080` is the only
+valid Cloudflare Tunnel origin. Caddy routes `/` to the frontend at
+`127.0.0.1:3000` and `/api/*` to FastAPI at `127.0.0.1:8000`; FastAPI alone may
+invoke ComfyUI at `127.0.0.1:8188`. Public users and browser code MUST NOT call
+ComfyUI or other internal services directly. Any change to these bindings or
+trust boundaries requires architecture approval.
 
-An owner-approved third-party proxy that terminates TLS at the network edge
-necessarily processes the capability token in cleartext in order to forward
-it. This is a recognised residual exposure, not a violation of the clause
-above, provided ALL of the following hold: the proxy is owner-approved in
-writing; credential logging is disabled wherever the provider exposes that
-control; the residual exposure is recorded in the project's security
-evidence, naming the provider and what it can observe; and the connection
-from that proxy to the origin is both encrypted and certificate-validated.
-The project MUST NOT claim the token is unlogged end-to-end while such a
-proxy is in the path - it may claim only that no project-controlled log
-contains it, and MUST state where the boundary of that claim lies. A
-private
-point-to-point tunnel used only to let a public-facing edge reach a
-non-public compute node (never itself exposed as the public entry point) is
-an internal binding, not "VPN access to the deployment," under this
-principle - the ports it carries MUST still never be publicly reachable, and
-its own address scope MUST stay as narrow as the specific peer it connects,
-never a wide allowlist or a full-tunnel default route. Upload validation
-MUST check content, size, and supported format; user-controlled names and
-paths are untrusted. Secrets, credentials, private IPs, and production
-configuration MUST NOT enter Git.
+### IV. Environment Separation
 
-### IV. Job and File Isolation
+Development and testing MUST use a temporary Cloudflare Quick Tunnel URL and
+MUST treat that URL as non-production and potentially public. URL obscurity
+MUST NOT be represented as authentication or access control. A stable custom
+hostname MAY be configured only after the project receives explicit authority
+to use its parent domain. No project activity may purchase a domain, create or
+alter external DNS records, or assume domain ownership without explicit owner
+approval. Test and future production configuration MUST remain separable so
+temporary settings cannot be mistaken for an authorized production endpoint.
 
-Each generation MUST use an opaque, unique Job ID. Inputs, outputs, temporary
-files, logs, and result access MUST be isolated by that ID. No user may access
-another job's content, progress, metadata, or output. State transitions MUST be
-explicit and validated; terminal states are immutable except through a documented
-recovery operation.
+### V. Security and Secrets
 
-### V. Single-GPU Queue Correctness
+Tunnel credentials, API keys, tokens, passwords, temporary public URLs, local
+environment secrets, private configuration, and user content MUST NOT enter
+version control or project-controlled logs. External input MUST be validated
+for content, type, size, name, and path before it reaches the AI workflow.
+Components MUST run with least privilege, internal services MUST deny direct
+public access, and generated files MUST be accessible only through the approved
+application boundary. Logs MUST redact sensitive values while retaining enough
+context for diagnosis.
 
-The MVP operates one serial GPU execution queue. Multiple users may submit jobs,
-but execution concurrency MUST never exceed the verified GPU capability. Queue
-position is informational and MUST NOT claim precision unavailable from the
-underlying engine. Duplicate submissions, retries, restarts, timeouts, and
-AI-engine failures MUST fail safely without producing conflicting results.
+### VI. Reliability and Resource Control
 
-### VI. Replaceable Integration Boundary
+Every AI generation MUST have an opaque unique Job ID, isolated input/output
+paths, and explicit lifecycle states including queued, running, completed,
+failed, and cancelled where supported. Transitions MUST be validated, terminal
+states MUST be stable, and restart recovery MUST not silently misreport or
+duplicate work. The RTX 5070 execution queue MUST default to one active GPU job
+unless target-hardware evidence approves a different bound. Timeouts, retries,
+GPU memory, disk usage, upload size, result retention, and cleanup MUST have
+documented limits. Startup, shutdown, dependency health, and failure recovery
+MUST be reproducible. Mock and real ComfyUI adapters MUST preserve the same
+backend-facing job contract.
 
-The backend MUST own a stable job-service interface. Mock and real AI generation
-MUST satisfy the same backend-facing contract. Internal workflow details and
-engine identifiers MUST NOT leak through the public frontend API. Workflow files,
-model versions, and runtime compatibility checks MUST be versioned and
-reproducible.
+### VII. Testing and Observability
 
-### VII. Cross-Platform Development Discipline
+API contracts, reverse-proxy routing, input validation, job transitions, file
+isolation, authorization boundaries, result access, error paths, and recovery
+behavior MUST have automated tests where automation is practical. Integration
+tests MUST cover the mock AI adapter; hardware- or network-dependent claims
+MUST retain a repeatable manual procedure and captured target-environment
+evidence. Logs and health endpoints MUST correlate failures by Job ID without
+revealing secrets or user content. No task, phase, or release may be marked
+complete until its stated validation has passed and evidence has been recorded.
 
-Shared application behavior MUST work in macOS development and Windows
-production where applicable. Paths, process execution, environment variables,
-and file locking MUST NOT assume POSIX-only behavior. Platform-specific setup
-MUST be isolated and documented so the production machine can be reproduced.
+### VIII. Scope Control
 
-### VIII. Test-First Critical Behavior
-
-API contracts, job transitions, upload validation, path isolation, authorization
-boundaries, and result access require tests before implementation is considered
-complete. Integration tests MUST cover the mock adapter. When real AI or
-public-network validation cannot be automated, the project MUST retain a clear
-manual verification procedure and captured evidence.
-
-### IX. Ownership-Critical Decisions
-
-Architecture, database choice, public access control, retention policy, upload
-limits, and deployment exposure require owner approval. Automation may recommend
-defaults but MUST NOT silently decide them. An unresolved decision blocks only
-the affected phase; unrelated, safe work may continue.
-
-### X. Scope and Simplicity
-
-MVP defaults to one frontend, one backend, one AI workflow engine, one GPU worker,
-and local storage. A new infrastructure component requires a documented product
-need, trade-off, and verification benefit before adoption. Simplicity is the
-default because it reduces operational risk on the single Windows server.
+Implementation MUST follow the approved specification, plan, and tasks. An
+architecture change requires updated design artifacts and explicit owner
+approval before application or deployment code changes. Architecture approval
+is mandatory for any second server, cloud compute or storage service, public
+origin binding, direct inbound rule, custom domain or DNS change, alternate
+Tunnel origin, changed service trust boundary, additional GPU node, external
+database or queue, or replacement of the reverse-proxy or AI workflow boundary.
+Proposals MUST state the need, alternatives, security impact, operational cost,
+migration path, and evidence plan. Unapproved complexity remains out of scope.
 
 ## Security and Operational Constraints
 
-All public routes, internal bindings, firewall rules, upload limits, storage
-retention, job ownership, and recovery behavior MUST be defined before public
-deployment. Job outputs MUST be finalized atomically before preview or download.
-Logs MUST correlate activity by Job ID without recording secrets or uploaded
-content. The project MUST document recovery from a backend restart, a failed
-workflow, missing output, insufficient disk space, and unsupported input.
+The only approved public request path is browser to Cloudflare to an
+outbound-established Tunnel to Caddy on the Notebook. `161.200.90.4` identifies
+the Notebook but MUST NOT be used as a direct public application endpoint.
+Internal ports MUST remain unreachable from the Internet. Job outputs MUST be
+finalized atomically before download, and inputs, outputs, temporary files, and
+logs MUST remain isolated by Job ID. The project MUST document bounded resource
+use and recovery from a backend restart, failed workflow, unavailable ComfyUI,
+GPU exhaustion, insufficient disk space, missing output, invalid input, and
+Tunnel interruption.
+
+Quick Tunnel is authorized only for development and test validation. Any move
+to a stable hostname or production exposure requires written authorization for
+the parent domain, a reviewed access policy, an updated threat assessment, and
+new end-to-end evidence. Authorization to test through Quick Tunnel does not
+authorize domain purchase, DNS changes, or a production launch.
 
 ## Development Workflow and Quality Gates
 
-Specifications define user value and acceptance criteria before technical plans;
-plans must include a Constitution Check before and after design. Tasks MUST have
-clear paths, dependencies, and verification criteria. Implementation proceeds by
-phase and records evidence before task completion. Windows GPU, LAN, router, DNS,
-certificate, firewall, and public-access work require actual target-environment
-evidence and any required owner approval. No implementation step may bypass a
-security or quality gate merely to report progress.
+Specifications MUST define user value, acceptance scenarios, boundaries, and
+measurable outcomes before technical planning. Plans MUST perform a Constitution
+Check before and after design and MUST document how the single-node topology,
+outbound-only connection, local bindings, resource limits, and security rules
+are satisfied. Tasks MUST include exact paths, dependencies, and validation
+criteria, with tests preceding critical behavior where practical.
+
+Implementation MUST proceed in independently verifiable phases: local service
+health, local reverse-proxy routing, mock AI flow, real ComfyUI/GPU flow, and
+Quick Tunnel validation. Local validation MUST precede public test exposure.
+Windows-specific process, path, firewall, and service behavior MUST be isolated
+and documented; shared application behavior MUST remain portable where the
+repository supports another development platform. Reviewers MUST reject work
+that bypasses a security, evidence, or architecture gate merely to report
+progress.
 
 ## Governance
 
-This constitution governs all project specifications, plans, tasks, implementation,
-and reviews. Every plan and implementation review MUST check compliance with these
-principles. Exceptions require a documented reason, risk, owner approval, and
-review trigger. Amendments MUST record their rationale, affected artifacts, and
-semantic-version change: MAJOR for incompatible governance changes, MINOR for new
-or materially expanded principles, and PATCH for clarifications only. The owner
-is the final authority for all ownership-critical decisions.
+This constitution supersedes conflicting specifications, plans, tasks,
+operations documents, and informal practices. Every planning pass, task review,
+implementation review, and release decision MUST record a Constitution Check.
+Non-compliance blocks only the affected work, but that work MUST NOT proceed
+until corrected or covered by an approved exception.
 
-**Version**: 1.2.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-05
+An amendment proposal MUST document its rationale, affected principles and
+artifacts, compatibility impact, security and operational risks, migration
+steps, validation evidence, and requested semantic-version change. The project
+owner MUST approve the amendment before it takes effect. Approved exceptions
+MUST identify their scope, owner, expiry or review trigger, and compensating
+controls; an exception does not amend this constitution.
+
+Constitution versions follow semantic versioning: MAJOR for incompatible
+governance or architecture changes, MINOR for new principles or materially
+expanded obligations, and PATCH for non-semantic clarification. The original
+ratification date remains fixed, and every amendment records its effective date
+as the Last Amended date. The owner is the final authority for architecture
+approval and all ownership-critical decisions.
+
+**Version**: 2.0.0 | **Ratified**: 2026-09-02 | **Last Amended**: 2026-09-06

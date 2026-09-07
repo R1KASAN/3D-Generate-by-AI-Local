@@ -35,6 +35,9 @@ export default function HomePage() {
   return (
     <main>
       <h1>Local 3D Generator</h1>
+      <aside role="note" aria-label="Test service notice">
+        Temporary non-production test service. The test URL is public and is not authentication.
+      </aside>
       <p>Upload one reference image to generate a textured GLB.</p>
       <GenerationForm onCreated={handleCreated} />
       {job ? <GenerationResult job={job} jobToken={job.job_token} /> : null}

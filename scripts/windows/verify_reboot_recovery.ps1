@@ -2,25 +2,27 @@
 param(
     [string]$ProjectRoot = '',
     [string]$EvidencePath = '',
+    [ValidateRange(3, 3)][int]$TrialCount = 3,
+    [ValidateRange(1, 3)][int]$TrialNumber = 1,
+    [ValidateSet('Auto', 'Queued', 'Running')][string]$ProbeMode = 'Auto',
     [switch]$ExecuteReboot,
     [switch]$AfterReboot,
-    [string]$TaskName = 'Local3D-Phase10-RebootVerification'
+    [string]$TaskName = 'Local3D-Feature004-RebootVerification'
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Net.Http
-
 $scriptRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
     $ProjectRoot = (Resolve-Path (Join-Path $scriptRoot '..\..')).Path
 }
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
 if ([string]::IsNullOrWhiteSpace($EvidencePath)) {
-    $EvidencePath = Join-Path $ProjectRoot 'evidence\lan\reboot-recovery.md'
+    $EvidencePath = Join-Path $ProjectRoot 'evidence\feature-004\us4-restart.md'
 }
-$statePath = Join-Path $ProjectRoot 'storage\phase10-reboot-state.json'
-$serviceNames = @('Local3D-ComfyUI', 'Local3D-API', 'Local3D-Web')
+$statePath = Join-Path $ProjectRoot 'storage\feature004-reboot-state.json'
+$serviceNames = @('Local3D-ComfyUI', 'Local3D-API', 'Local3D-Web', 'Local3D-Caddy')
 
 function Get-ServiceGate {
     $records = @(foreach ($name in $serviceNames) {
@@ -28,200 +30,189 @@ function Get-ServiceGate {
             Select-Object -First 1
     })
     [PSCustomObject]@{
-        Records = $records
-        Installed = $records.Count -eq $serviceNames.Count
-        Running = $records.Count -eq $serviceNames.Count -and
-            @($records | Where-Object { [string]$_.State -ne 'Running' }).Count -eq 0
-        Automatic = $records.Count -eq $serviceNames.Count -and
-            @($records | Where-Object { [string]$_.StartMode -ne 'Auto' }).Count -eq 0
-        Restricted = $records.Count -eq $serviceNames.Count -and
-            @($records | Where-Object { [string]$_.StartName -notmatch '(?i)(^|\\| )LocalService$' }).Count -eq 0
+        Installed = $records.Count -eq 4
+        Running = $records.Count -eq 4 -and @($records | Where-Object State -ne 'Running').Count -eq 0
+        Automatic = $records.Count -eq 4 -and @($records | Where-Object StartMode -ne 'Auto').Count -eq 0
+        Restricted = $records.Count -eq 4 -and @($records | Where-Object StartName -notmatch '(?i)LocalService$').Count -eq 0
     }
 }
 
-function Wait-ServiceStack {
-    param([int]$TimeoutSeconds = 600)
-
-    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
-    while ([DateTime]::UtcNow -lt $deadline) {
+function Wait-ServiceStack([int]$TimeoutSeconds = 300) {
+    $started = [DateTime]::UtcNow
+    $deadline = $started.AddSeconds($TimeoutSeconds)
+    do {
         $gate = Get-ServiceGate
         if ($gate.Running -and $gate.Restricted) {
             try {
-                $api = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8000/api/v1/health/ready' -TimeoutSec 5
-                $comfy = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8188/system_stats' -TimeoutSec 5
-                $web = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000' -TimeoutSec 5
-                if ($api.StatusCode -eq 200 -and $comfy.StatusCode -eq 200 -and $web.StatusCode -eq 200) {
-                    return $gate
+                $checks = @(
+                    'http://127.0.0.1:8080/',
+                    'http://127.0.0.1:8080/api/v1/health/live',
+                    'http://127.0.0.1:3000/',
+                    'http://127.0.0.1:8000/api/v1/health/ready',
+                    'http://127.0.0.1:8188/system_stats'
+                )
+                foreach ($uri in $checks) {
+                    if ((Invoke-WebRequest -UseBasicParsing -Uri $uri -TimeoutSec 5).StatusCode -ne 200) {
+                        throw 'not ready'
+                    }
                 }
+                return [PSCustomObject]@{ Gate = $gate; Seconds = ([DateTime]::UtcNow - $started).TotalSeconds }
             } catch { }
         }
         Start-Sleep -Seconds 3
-    }
-    throw "Service stack did not become healthy within $TimeoutSeconds seconds after boot."
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "Caddy and local service stack did not become healthy within $TimeoutSeconds seconds."
 }
 
-function Write-RecoveryEvidence {
-    param(
-        [string]$Verdict,
-        [string]$BootSummary,
-        [string]$ReconciliationSummary,
-        [string]$GenerationSummary,
-        [string]$Action,
-        [object]$Gate = (Get-ServiceGate)
-    )
-
-    $lines = [System.Collections.Generic.List[string]]::new()
-    $lines.Add('# Windows Reboot Recovery Evidence (T081)')
-    $lines.Add('')
-    $lines.Add("- Date/time (UTC): $((Get-Date).ToUniversalTime().ToString('o'))")
-    $lines.Add("- Host: $env:COMPUTERNAME")
-    $lines.Add('- Scope: automatic service startup, durable-state reconciliation, and one new real generation after reboot.')
-    $lines.Add('')
-    $lines.Add('| Check | Observed | Expected | Verdict |')
-    $lines.Add('|---|---|---|---|')
-    $lines.Add("| services installed | $($Gate.Installed) | all three WinSW services installed | **$(if ($Gate.Installed) { 'PASS' } else { 'BLOCKED' })** |")
-    $lines.Add("| automatic startup | $($Gate.Automatic) | all three services configured for automatic startup | **$(if ($Gate.Automatic) { 'PASS' } else { 'BLOCKED' })** |")
-    $lines.Add("| restricted identity | $($Gate.Restricted) | all three services run as LocalService | **$(if ($Gate.Restricted) { 'PASS' } else { 'BLOCKED' })** |")
-    $lines.Add("| machine reboot and health | $BootSummary | boot time changed and all loopback health checks passed without opening terminals | **$Verdict** |")
-    $lines.Add("| non-terminal reconciliation | $ReconciliationSummary | pre-reboot processing job becomes failed/restart_recovery without duplicate submission | **$Verdict** |")
-    $lines.Add("| new real generation | $GenerationSummary | one new textured GLB after automatic startup | **$Verdict** |")
-    $lines.Add('')
-    $lines.Add('- No raw job token is persisted in reboot state or evidence.')
-    $lines.Add("- Smallest next action: $Action")
-    $lines.Add("- Overall verdict: **$Verdict**")
-    $parent = Split-Path -Parent $EvidencePath
-    New-Item -ItemType Directory -Path $parent -Force | Out-Null
-    Set-Content -LiteralPath $EvidencePath -Value ($lines -join [Environment]::NewLine) -Encoding utf8
-}
-
-function New-ProcessingProbe {
-    $fixture = Join-Path $ProjectRoot 'fixtures\inputs\valid-reference.jpg'
+function New-AcceptedJob {
+    $fixture = Join-Path $ProjectRoot 'fixtures\inputs\valid-reference.png'
     $client = [System.Net.Http.HttpClient]::new()
     try {
-        $bytes = [System.IO.File]::ReadAllBytes($fixture)
         $form = [System.Net.Http.MultipartFormDataContent]::new()
-        $content = [System.Net.Http.ByteArrayContent]::new($bytes)
-        $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('image/jpeg')
-        $form.Add($content, 'file', 'phase10-reboot-probe.jpg')
+        $content = [System.Net.Http.ByteArrayContent]::new([System.IO.File]::ReadAllBytes($fixture))
+        $content.Headers.ContentType = [System.Net.Http.Headers.MediaTypeHeaderValue]::Parse('image/png')
+        $form.Add($content, 'file', 'reboot-probe.png')
         $response = $client.PostAsync('http://127.0.0.1:8000/api/v1/jobs', $form).GetAwaiter().GetResult()
-        if (-not $response.IsSuccessStatusCode) { throw "reboot probe creation returned HTTP $([int]$response.StatusCode)" }
+        if (-not $response.IsSuccessStatusCode) { throw "probe admission returned HTTP $([int]$response.StatusCode)" }
         $created = $response.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
-        $jobId = [string]$created.job_id
-        $token = [string]$created.job_token
-        $deadline = [DateTime]::UtcNow.AddMinutes(2)
-        do {
-            $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, "http://127.0.0.1:8000/api/v1/jobs/$jobId")
-            $request.Headers.Add('X-Job-Token', $token)
-            $statusResponse = $client.SendAsync($request).GetAwaiter().GetResult()
-            if (-not $statusResponse.IsSuccessStatusCode) { throw "reboot probe status returned HTTP $([int]$statusResponse.StatusCode)" }
-            $status = $statusResponse.Content.ReadAsStringAsync().GetAwaiter().GetResult() | ConvertFrom-Json
-            if ([string]$status.status -eq 'processing') { return $jobId }
-            if ([string]$status.status -in @('completed', 'failed', 'cancelled')) {
-                throw "reboot probe reached terminal state $($status.status) before reboot"
-            }
-            Start-Sleep -Seconds 1
-        } while ([DateTime]::UtcNow -lt $deadline)
-        throw 'reboot probe did not enter processing within two minutes'
+        return [string]$created.job_id
     } finally {
         $client.Dispose()
     }
 }
 
-$initialGate = Get-ServiceGate
-if (-not $initialGate.Installed -or -not $initialGate.Automatic -or -not $initialGate.Restricted) {
-    Write-RecoveryEvidence -Verdict 'BLOCKED' -BootSummary 'service installation gate is incomplete' `
-        -ReconciliationSummary 'not attempted' -GenerationSummary 'not attempted' `
-        -Action 'install all three Automatic LocalService services before rebooting.' -Gate $initialGate
-    Write-Output "BLOCKED: reboot evidence written to $EvidencePath"
-    exit 1
+function Read-Probes([string[]]$Ids) {
+    $python = Join-Path $ProjectRoot 'apps\api\.venv\Scripts\python.exe'
+    $arguments = @((Join-Path $ProjectRoot 'scripts\windows\check_reboot_probe.py'), '--database', (Join-Path $ProjectRoot 'storage\jobs.sqlite3'))
+    foreach ($id in $Ids) { $arguments += @('--job-id', $id) }
+    $json = & $python @arguments
+    if ($LASTEXITCODE -ne 0) { throw 'sanitized reboot-probe database check failed' }
+    return $json | ConvertFrom-Json
+}
+
+function Wait-DatabaseState([string]$JobId, [string]$Status, [int]$TimeoutSeconds = 120) {
+    $deadline = [DateTime]::UtcNow.AddSeconds($TimeoutSeconds)
+    do {
+        $record = (Read-Probes @($JobId)).jobs[0]
+        if ([string]$record.status -eq $Status) { return $record }
+        if ([string]$record.status -in @('completed', 'failed', 'cancelled')) {
+            throw "probe reached terminal state before reboot"
+        }
+        Start-Sleep -Seconds 1
+    } while ([DateTime]::UtcNow -lt $deadline)
+    throw "probe did not reach $Status before reboot"
+}
+
+function Get-OrphanCounts {
+    try {
+        $queue = Invoke-RestMethod -Uri 'http://127.0.0.1:8188/queue' -TimeoutSec 5
+        return "running=$(@($queue.queue_running).Count); pending=$(@($queue.queue_pending).Count); identifiers omitted"
+    } catch {
+        return 'engine queue unavailable; identifiers omitted'
+    }
+}
+
+function Add-TrialEvidence([object]$State, [object]$ProbeResult, [double]$ReadySeconds, [string]$Verdict) {
+    $lines = [System.Collections.Generic.List[string]]::new()
+    if (-not (Test-Path -LiteralPath $EvidencePath)) {
+        $lines.Add('# Feature 004 Notebook Restart Evidence')
+        $lines.Add('')
+        $lines.Add('- Three real reboot trials are required. No capability tokens, user content, engine handles, or temporary URLs are recorded.')
+        $lines.Add('')
+    }
+    $lines.Add("## Trial $($State.trial_number) of $TrialCount - $($State.probe_mode)")
+    $lines.Add('')
+    $lines.Add("- Verified at (UTC): $([DateTime]::UtcNow.ToString('o'))")
+    $lines.Add("- Local readiness restored in: $([math]::Round($ReadySeconds, 1)) seconds (limit: 300)")
+    $lines.Add("- Boot time changed: true")
+    $lines.Add("- Orphan-engine report: $(Get-OrphanCounts)")
+    foreach ($job in $ProbeResult.jobs) {
+        $lines.Add("- Probe `$($job.job_id)`: status=$($job.status); error=$($job.error_code); attempts=$($job.attempt_count); events=$($job.event_count)")
+    }
+    $lines.Add("- Verdict: **$Verdict**")
+    $lines.Add('')
+    New-Item -ItemType Directory -Path (Split-Path -Parent $EvidencePath) -Force | Out-Null
+    Add-Content -LiteralPath $EvidencePath -Value ($lines -join [Environment]::NewLine) -Encoding utf8
+}
+
+$gate = Get-ServiceGate
+if (-not $gate.Installed -or -not $gate.Automatic -or -not $gate.Restricted) {
+    throw 'All four Local3D services must be installed as Automatic LocalService services.'
 }
 
 if ($AfterReboot) {
-    try {
-        if (-not (Test-Path -LiteralPath $statePath)) { throw 'pre-reboot state file is missing' }
-        $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
-        $currentBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
-        $previousBoot = [DateTime]::Parse([string]$state.boot_time_utc).ToUniversalTime()
-        if ($currentBoot -le $previousBoot) { throw 'machine boot time did not change' }
-
-        $gate = Wait-ServiceStack
-        $python = Join-Path $ProjectRoot 'apps\api\.venv\Scripts\python.exe'
-        $probeScript = Join-Path $ProjectRoot 'scripts\windows\check_reboot_probe.py'
-        $probeJson = & $python $probeScript --database (Join-Path $ProjectRoot 'storage\jobs.sqlite3') --job-id ([string]$state.job_id)
-        if ($LASTEXITCODE -ne 0) { throw 'reboot probe database check failed' }
-        $probe = $probeJson | ConvertFrom-Json
-        if ([string]$probe.status -ne 'failed' -or [string]$probe.error_code -ne 'restart_recovery' -or [int]$probe.attempt_count -ne 1) {
-            throw 'pre-reboot processing job was not safely reconciled'
+    if (-not (Test-Path -LiteralPath $statePath)) { throw 'pre-reboot state file is missing' }
+    $state = Get-Content -Raw -LiteralPath $statePath | ConvertFrom-Json
+    $currentBoot = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime()
+    $previousBoot = [DateTime]::Parse([string]$state.boot_time_utc).ToUniversalTime()
+    if ($currentBoot -le $previousBoot) { throw 'machine boot time did not change' }
+    $ready = Wait-ServiceStack -TimeoutSeconds 300
+    $result = Read-Probes @($state.job_ids)
+    $valid = $true
+    foreach ($job in $result.jobs) {
+        if ([int]$job.attempt_count -gt 1) { $valid = $false }
+        if ($state.probe_mode -eq 'Running' -and ([string]$job.status -ne 'failed' -or [string]$job.error_code -ne 'restart_recovery')) {
+            $valid = $false
         }
-
-        $serviceEvidence = Join-Path $ProjectRoot 'evidence\lan\service-startup.md'
-        & powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $ProjectRoot 'scripts\windows\verify_services.ps1') `
-            -ProjectRoot $ProjectRoot -EvidencePath $serviceEvidence -RunGeneration
-        if ($LASTEXITCODE -ne 0) { throw 'post-reboot service and generation verification did not pass' }
-        $generationLine = Get-Content -LiteralPath $serviceEvidence |
-            Where-Object { $_ -match '^\| post-service-generation \|' } | Select-Object -First 1
-        if (-not $generationLine -or $generationLine -notmatch 'job_id=([^;]+); size=([0-9]+); sha256=([0-9a-f]{64})') {
-            throw 'post-reboot generation evidence is incomplete'
-        }
-        $generationSummary = "job_id=$($Matches[1]); size=$($Matches[2]); sha256=$($Matches[3])"
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $statePath -Force
-        Write-RecoveryEvidence -Verdict 'PASS' `
-            -BootSummary "previous_boot=$($previousBoot.ToString('o')); current_boot=$($currentBoot.ToString('o')); api/comfyui/web=200" `
-            -ReconciliationSummary "job_id=$($probe.job_id); status=$($probe.status); error_code=$($probe.error_code); attempt_count=$($probe.attempt_count)" `
-            -GenerationSummary $generationSummary -Action 'none; retain this evidence.' -Gate $gate
-        Write-Output "PASS: reboot evidence written to $EvidencePath"
-        exit 0
-    } catch {
-        Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-        Write-Warning "Post-reboot verifier failed: $($_.Exception.Message)"
-        Write-RecoveryEvidence -Verdict 'FAIL' -BootSummary 'post-reboot verification failed' `
-            -ReconciliationSummary 'not proven' -GenerationSummary 'not proven' `
-            -Action 'inspect sanitized service logs and retained reboot state before retrying.'
-        Write-Output "FAIL: reboot evidence written to $EvidencePath"
-        exit 1
     }
+    $verdict = if ($valid -and $ready.Seconds -le 300) { 'PASS' } else { 'FAIL' }
+    Add-TrialEvidence -State $state -ProbeResult $result -ReadySeconds $ready.Seconds -Verdict $verdict
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $statePath -Force
+    if ($verdict -ne 'PASS') { exit 1 }
+    Write-Output "PASS: reboot trial $($state.trial_number) recorded. Run the next trial manually; no further reboot was scheduled."
+    exit 0
 }
 
 if (-not $ExecuteReboot) {
-    Write-RecoveryEvidence -Verdict 'BLOCKED' -BootSummary 'dry run; reboot not requested' `
-        -ReconciliationSummary 'not attempted' -GenerationSummary 'not attempted' `
-        -Action 'rerun with -ExecuteReboot from an elevated administrator session.' -Gate $initialGate
-    Write-Output "BLOCKED: reboot evidence written to $EvidencePath"
-    exit 1
+    Write-Output "READY: runner validated for trial $TrialNumber/$TrialCount. No reboot was performed; rerun with -ExecuteReboot only after explicit approval."
+    exit 0
 }
 
-$principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
+$principal = [Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-RecoveryEvidence -Verdict 'BLOCKED' -BootSummary 'current session is not elevated' `
-        -ReconciliationSummary 'not attempted' -GenerationSummary 'not attempted' `
-        -Action 'rerun from an elevated administrator session.' -Gate $initialGate
-    Write-Output "BLOCKED: reboot evidence written to $EvidencePath"
-    exit 1
+    throw 'ExecuteReboot requires an elevated PowerShell session.'
+}
+Write-Output "START: preparing reboot trial $TrialNumber/$TrialCount; validating the local service stack."
+Wait-ServiceStack -TimeoutSeconds 300 | Out-Null
+Write-Output 'READY: local Caddy, Web, API, and ComfyUI checks passed.'
+$selectedMode = if ($ProbeMode -eq 'Auto') { if ($TrialNumber -eq 2) { 'Queued' } else { 'Running' } } else { $ProbeMode }
+$engineQueue = Invoke-RestMethod -Uri 'http://127.0.0.1:8188/queue' -TimeoutSec 5
+$engineRunning = @($engineQueue.queue_running).Count
+$enginePending = @($engineQueue.queue_pending).Count
+if ($engineRunning -gt 0 -or $enginePending -gt 0) {
+    throw "Cannot prepare reboot trial while ComfyUI is busy (running=$engineRunning; pending=$enginePending). Wait for the existing work to finish, then run this trial again."
+}
+Write-Output "PROBE: queue is idle; preparing a $selectedMode recovery probe."
+$jobIds = [System.Collections.Generic.List[string]]::new()
+if ($selectedMode -eq 'Queued') {
+    $blocker = New-AcceptedJob
+    Write-Output 'PROBE: waiting for the blocker job to enter processing.'
+    Wait-DatabaseState -JobId $blocker -Status 'processing' | Out-Null
+    $jobIds.Add((New-AcceptedJob))
+    Write-Output 'PROBE: waiting for the recovery probe to enter queued state.'
+    Wait-DatabaseState -JobId $jobIds[0] -Status 'queued' | Out-Null
+} else {
+    $jobIds.Add((New-AcceptedJob))
+    Write-Output 'PROBE: waiting for the recovery probe to enter processing.'
+    Wait-DatabaseState -JobId $jobIds[0] -Status 'processing' | Out-Null
 }
 
+$state = [PSCustomObject]@{
+    trial_number = $TrialNumber
+    probe_mode = $selectedMode
+    job_ids = @($jobIds)
+    boot_time_utc = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
+    prepared_at_utc = [DateTime]::UtcNow.ToString('o')
+}
+Set-Content -LiteralPath $statePath -Value ($state | ConvertTo-Json) -Encoding utf8
 $scriptPath = $MyInvocation.MyCommand.Path
-$taskArguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -ProjectRoot `"$ProjectRoot`" -EvidencePath `"$EvidencePath`" -AfterReboot -TaskName `"$TaskName`""
-$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArguments
+$arguments = "-NoProfile -ExecutionPolicy Bypass -File `"$scriptPath`" -ProjectRoot `"$ProjectRoot`" -EvidencePath `"$EvidencePath`" -TrialCount $TrialCount -TrialNumber $TrialNumber -AfterReboot -TaskName `"$TaskName`""
+$action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $arguments
 $trigger = New-ScheduledTaskTrigger -AtStartup
 $taskPrincipal = New-ScheduledTaskPrincipal -UserId 'SYSTEM' -LogonType ServiceAccount -RunLevel Highest
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 1)
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Minutes 15)
 Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Principal $taskPrincipal -Settings $settings -Force | Out-Null
 
-try {
-    $probeJobId = New-ProcessingProbe
-    $state = [PSCustomObject]@{
-        job_id = $probeJobId
-        boot_time_utc = (Get-CimInstance Win32_OperatingSystem).LastBootUpTime.ToUniversalTime().ToString('o')
-        prepared_at_utc = [DateTime]::UtcNow.ToString('o')
-    }
-    Set-Content -LiteralPath $statePath -Value ($state | ConvertTo-Json) -Encoding utf8
-} catch {
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-    throw
-}
-
-Write-RecoveryEvidence -Verdict 'BLOCKED' -BootSummary 'verification task registered; reboot scheduled' `
-    -ReconciliationSummary "processing probe job_id=$probeJobId prepared; result pending reboot" `
-    -GenerationSummary 'pending reboot' -Action 'allow the scheduled reboot and startup verifier to finish.' -Gate $initialGate
-shutdown.exe /r /t 15 /d p:4:1 /c 'Phase 10 approved reboot recovery verification'
+Write-Output "REBOOT PENDING: trial $TrialNumber/$TrialCount ($selectedMode) begins in 15 seconds."
+shutdown.exe /r /t 15 /d p:4:1 /c 'Feature 004 approved reboot recovery verification'

@@ -40,6 +40,13 @@ $definitions = @(
         Port = '3000'
         Dependency = 'Local3D-API'
     }
+    [PSCustomObject]@{
+        Name = 'Local3D-Caddy'
+        File = Join-Path $ProjectRoot 'deploy\windows\services\caddy.xml'
+        Bind = '127.0.0.1:8080'
+        Port = '8080'
+        Dependency = 'Local3D-Web'
+    }
 )
 
 $checks = [System.Collections.Generic.List[object]]::new()
@@ -138,8 +145,9 @@ if ($allInstalled -and $allRunning -and $allRestricted) {
         $api = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8000/api/v1/health/ready' -TimeoutSec 10
         $comfy = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8188/system_stats' -TimeoutSec 10
         $web = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000' -TimeoutSec 10
-        $healthPass = ($api.StatusCode -eq 200 -and $comfy.StatusCode -eq 200 -and $web.StatusCode -eq 200)
-        Add-Check 'health' "api=$($api.StatusCode); comfyui=$($comfy.StatusCode); web=$($web.StatusCode)" 'API, ComfyUI, and web service healthy after ordered startup' $(if ($healthPass) { 'PASS' } else { 'FAIL' })
+        $caddy = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8080/api/v1/health/live' -TimeoutSec 10
+        $healthPass = ($api.StatusCode -eq 200 -and $comfy.StatusCode -eq 200 -and $web.StatusCode -eq 200 -and $caddy.StatusCode -eq 200)
+        Add-Check 'health' "api=$($api.StatusCode); comfyui=$($comfy.StatusCode); web=$($web.StatusCode); caddy=$($caddy.StatusCode)" 'API, ComfyUI, Web, and Caddy healthy after ordered startup' $(if ($healthPass) { 'PASS' } else { 'FAIL' })
     } catch {
         Add-Check 'health' 'one or more service health requests failed' 'API, ComfyUI, and web service healthy after ordered startup' 'FAIL'
     }

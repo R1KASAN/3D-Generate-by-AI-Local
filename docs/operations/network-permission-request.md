@@ -1,3 +1,8 @@
+# HISTORICAL — no feature-004 network change
+
+Feature 004 requires outbound cloudflared only. Do not apply the inbound
+permissions described below to the single Notebook architecture.
+
 # Network Permission Request — Cloudflare Public Entry
 
 **Feature:** `002-cloudflare-public-entry`

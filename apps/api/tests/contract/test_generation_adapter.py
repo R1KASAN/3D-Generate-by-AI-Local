@@ -37,6 +37,10 @@ def test_mock_adapter_progresses_to_one_isolated_textured_candidate(tmp_path: Pa
     assert first_observations[-1].candidates[0].is_relative_to(tmp_path / str(first_id))
     assert second_observations[-1].candidates[0].is_relative_to(tmp_path / str(second_id))
     assert first_observations[-1].candidates[0] != second_observations[-1].candidates[0]
+    assert (
+        first_observations[-1].candidates[0].read_bytes()
+        != second_observations[-1].candidates[0].read_bytes()
+    )
 
 
 def test_engine_handle_is_opaque_and_does_not_expose_prompt_ids(tmp_path: Path) -> None:

@@ -31,6 +31,16 @@ class SerialDispatcher:
             raise ValueError("only the active job can complete")
         self.active_job = None
 
+    def cancel_pending(self, job_id: str) -> bool:
+        """Remove a waiting job without interrupting the active GPU job."""
+        if job_id == self.active_job:
+            return False
+        try:
+            self._queue.remove(job_id)
+        except ValueError:
+            return False
+        return True
+
     def position(self, job_id: str) -> int | None:
         if job_id == self.active_job:
             return 1

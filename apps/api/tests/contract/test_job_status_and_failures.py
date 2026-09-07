@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import pytest
 
 from fastapi.testclient import TestClient
 
@@ -56,7 +57,7 @@ def test_status_exposes_only_engine_backed_progress_and_safe_terminal_result(tmp
     assert queued.json()["progress_percent"] is None
     assert queued.json()["queue_position"] in {None, 1}
     assert queued.json()["queue_position_is_approximate"] is True
-    assert processing.json()["status"] == "processing"
+    assert processing.json()["status"] == "running"
     assert processing.json()["progress_percent"] == 50
     assert completed.json()["status"] == "completed"
     assert completed.json()["progress_percent"] == 100
@@ -98,3 +99,22 @@ def test_missing_output_and_timeout_are_terminal_without_false_completion(tmp_pa
     assert timeout.json()["status"] == "failed"
     assert timeout.json()["error"]["code"] == "generation_timeout"
     assert timeout_model.status_code == 409
+
+
+@pytest.mark.parametrize(
+    ("filename", "content_kind", "mime", "status"),
+    [
+        pytest.param("notes.txt", "invalid", "application/octet-stream", 415, id="unsupported-extension"),
+        pytest.param("corrupt.png", "invalid", "image/png", 422, id="corrupt-image"),
+        pytest.param("large.png", "large", "image/png", 413, id="oversized-upload"),
+    ],
+)
+def test_invalid_uploads_have_stable_no_store_errors(
+    tmp_path: Path, filename: str, content_kind: str, mime: str, status: int
+) -> None:
+    content = b"not-an-image" if content_kind == "invalid" else b"x" * (10 * 1024 * 1024 + 1)
+    with _client(tmp_path) as client:
+        response = client.post("/api/v1/jobs", files={"file": (filename, content, mime)})
+    assert response.status_code == status
+    assert response.headers["cache-control"] == "no-store"
+    assert response.json()["error"]["message"]

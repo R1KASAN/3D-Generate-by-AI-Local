@@ -28,11 +28,13 @@ class WorkflowMapper:
         input_bindings: tuple[WorkflowBinding, ...],
         output_binding: WorkflowBinding,
         expected_sha256: str,
+        workflow_revision: str = "",
     ) -> None:
         self.workflow_path = Path(workflow_path).resolve()
         self.input_bindings = input_bindings
         self.output_binding = output_binding
         self.expected_sha256 = expected_sha256
+        self.workflow_revision = workflow_revision
         self._verify_source_hash()
 
     @classmethod
@@ -62,6 +64,7 @@ class WorkflowMapper:
             input_bindings=input_bindings,
             output_binding=output_binding,
             expected_sha256=expected_hash,
+            workflow_revision=str(manifest.get("workflow_revision", "unknown")),
         )
 
     def map_request(self, *, input_path: Path, output_prefix: str) -> dict[str, Any]:

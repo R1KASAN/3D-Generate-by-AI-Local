@@ -26,6 +26,7 @@ REQUIRED_MANIFEST_MARKERS = (
     "output_binding",
     "licenses",
 )
+PUBLIC_STATES = {"queued", "running", "completed", "failed", "cancelled"}
 
 
 def validate_openapi(path: Path) -> list[str]:
@@ -49,6 +50,13 @@ def validate_openapi(path: Path) -> list[str]:
     job_token = schemes.get("JobToken", {}) if isinstance(schemes, dict) else {}
     if job_token.get("in") != "header" or job_token.get("name") != "X-Job-Token":
         errors.append("JobToken must be the X-Job-Token header scheme")
+    schemas = document.get("components", {}).get("schemas", {})
+    job_status = schemas.get("JobStatus", {}) if isinstance(schemas, dict) else {}
+    states = set(job_status.get("enum", [])) if isinstance(job_status, dict) else set()
+    if states != PUBLIC_STATES:
+        errors.append(f"JobStatus enum must be exactly {sorted(PUBLIC_STATES)}")
+    if "processing" in states:
+        errors.append("OpenAPI JobStatus must not expose internal processing vocabulary")
     return errors
 
 

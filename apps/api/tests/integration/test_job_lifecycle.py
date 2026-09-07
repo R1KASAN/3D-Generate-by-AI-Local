@@ -128,7 +128,7 @@ def test_repeated_engine_processing_observations_update_progress(tmp_path: Path)
             for _ in range(4)
         ]
 
-    assert [item["status"] for item in statuses] == ["queued", "processing", "processing", "completed"]
+    assert [item["status"] for item in statuses] == ["queued", "running", "running", "completed"]
     assert statuses[1]["progress_percent"] == 10
     assert statuses[2]["progress_percent"] == 20
 

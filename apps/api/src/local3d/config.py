@@ -32,6 +32,10 @@ class Settings(BaseModel):
     max_pending_jobs: int = Field(default=20, ge=1)
     max_submissions_per_minute: int = Field(default=30, ge=1)
     max_identical_per_minute: int = Field(default=5, ge=1)
+    job_timeout_seconds: int = Field(default=600, gt=0, le=86_400)
+    worker_interval_seconds: int = Field(default=1, gt=0, le=60)
+    maintenance_interval_seconds: int = Field(default=300, gt=0, le=86_400)
+    orphan_grace_hours: int = Field(default=1, gt=0, le=24)
     workflow_manifest_path: Path = Path("workflows/hunyuan3d/workflow-manifest.json")
 
     @field_validator("comfyui_base_url")
@@ -75,6 +79,10 @@ _ENV_TO_FIELD = {
     "MAX_PENDING_JOBS": "max_pending_jobs",
     "MAX_SUBMISSIONS_PER_MINUTE": "max_submissions_per_minute",
     "MAX_IDENTICAL_PER_MINUTE": "max_identical_per_minute",
+    "JOB_TIMEOUT_SECONDS": "job_timeout_seconds",
+    "WORKER_INTERVAL_SECONDS": "worker_interval_seconds",
+    "MAINTENANCE_INTERVAL_SECONDS": "maintenance_interval_seconds",
+    "ORPHAN_GRACE_HOURS": "orphan_grace_hours",
     "WORKFLOW_MANIFEST_PATH": "workflow_manifest_path",
 }
 _SECRET_MARKERS = ("SECRET", "PASSWORD", "TOKEN", "API_KEY")
@@ -86,6 +94,10 @@ _APPLICATION_ENV_PREFIXES = (
     "STORAGE_",
     "DATABASE_",
     "MAX_",
+    "JOB_",
+    "ORPHAN_",
+    "WORKER_",
+    "MAINTENANCE_",
     "RETENTION_",
     "MIN_",
     "WORKFLOW_",

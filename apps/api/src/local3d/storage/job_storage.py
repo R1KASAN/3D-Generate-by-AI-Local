@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from datetime import datetime
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
 from typing import Literal
@@ -108,6 +109,23 @@ class JobStorage:
             raise PathViolation("job path escapes storage root")
         if job_root.exists():
             shutil.rmtree(job_root)
+
+    def remove_orphaned_jobs(self, known_job_ids: set[UUID], *, older_than: datetime) -> list[UUID]:
+        """Remove only old, real UUID directories with no database row."""
+        removed: list[UUID] = []
+        cutoff = older_than.timestamp()
+        for entry in self.root.iterdir():
+            if not entry.is_dir() or entry.is_symlink():
+                continue
+            try:
+                job_id = UUID(entry.name)
+            except ValueError:
+                continue
+            if job_id in known_job_ids or entry.stat().st_mtime >= cutoff:
+                continue
+            shutil.rmtree(entry)
+            removed.append(job_id)
+        return removed
 
     @staticmethod
     def _parse_job_id(job_id: UUID | str) -> UUID:

@@ -66,7 +66,7 @@ async def test_restart_reconciliation_fails_processing_without_duplicate_submiss
         headers = {"X-Job-Token": token}
         client.get(f"/api/v1/jobs/{job_id}", headers=headers)
         processing = client.get(f"/api/v1/jobs/{job_id}", headers=headers)
-        assert processing.json()["status"] == "processing"
+        assert processing.json()["status"] == "running"
 
     restarted_adapter = MockGenerationAdapter(fixture_path=MODEL)
     restarted = JobService(settings, adapter=restarted_adapter)
@@ -78,6 +78,8 @@ async def test_restart_reconciliation_fails_processing_without_duplicate_submiss
     assert stored is not None
     assert stored.status.value == "failed"
     assert stored.error_code == "restart_recovery"
+    events = await restarted.repository.list_events(stored.job_id)
+    assert any(event.event_type == "orphan_engine_work" for event in events)
     assert restarted_adapter.submission_count == 0
 
 

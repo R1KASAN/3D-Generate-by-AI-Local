@@ -4,6 +4,9 @@ import logging
 from uuid import uuid4
 
 import pytest
+from fastapi.testclient import TestClient
+from local3d.config import Settings
+from local3d.main import create_app
 
 from local3d.api.errors import map_exception
 from local3d.api.health import health_payload
@@ -58,3 +61,15 @@ def test_structured_job_logging_keeps_job_id_but_drops_sensitive_details(
     assert "Job accepted" in text
     for forbidden in ("raw-token-must-not-appear", "private-input.png", "/private/storage", "Basic"):
         assert forbidden not in text
+
+
+def test_readiness_fails_closed_when_application_service_is_unavailable(tmp_path):
+    settings = Settings(
+        generation_adapter="comfyui",
+        workflow_manifest_path=tmp_path / "missing.json",
+        comfyui_output_root=tmp_path / "comfy-output",
+    )
+    with TestClient(create_app(settings)) as client:
+        response = client.get("/api/v1/health/ready")
+    assert response.status_code == 503
+    assert response.json() == {"status": "unavailable"}

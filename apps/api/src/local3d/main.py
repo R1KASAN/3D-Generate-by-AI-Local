@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+import asyncio
 from typing import AsyncIterator
 
 from fastapi import FastAPI
@@ -10,11 +11,13 @@ from .api.errors import unhandled_exception_handler
 from .api.health import router as health_router
 from .api.jobs import router as jobs_router
 from .config import Settings, load_settings
+from .observability.logging import configure_logging
 from .services.job_service import JobService
 from .services.recovery import RecoveryService
 
 
 def create_app(settings: Settings | None = None, service: JobService | None = None) -> FastAPI:
+    configure_logging("local3d")
     resolved_settings = settings or load_settings()
     adapter_ready = True
     job_service = service
@@ -39,13 +42,18 @@ def create_app(settings: Settings | None = None, service: JobService | None = No
         if job_service is not None:
             await job_service.startup()
             await RecoveryService(job_service).reconcile()
-            worker_task = job_service.start_worker()
-            maintenance_task = job_service.start_maintenance()
+            worker_task = job_service.start_worker(
+                interval_seconds=resolved_settings.worker_interval_seconds
+            )
+            maintenance_task = job_service.start_maintenance(
+                interval_seconds=resolved_settings.maintenance_interval_seconds
+            )
             try:
                 yield
             finally:
                 await job_service.stop_worker(worker_task)
                 await job_service.stop_maintenance(maintenance_task)
+                await asyncio.to_thread(job_service.adapter.close)
         else:
             yield
 

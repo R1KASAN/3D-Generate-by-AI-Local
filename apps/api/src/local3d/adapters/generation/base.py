@@ -66,3 +66,7 @@ class GenerationAdapter(Protocol):
         health check.
         """
         ...
+
+    def close(self) -> None:
+        """Release adapter-owned threads, sockets, and client resources."""
+        ...

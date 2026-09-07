@@ -15,6 +15,7 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
 }
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
 $serviceRoot = Join-Path $ProjectRoot 'deploy\windows\services'
+$logsRoot = Join-Path $ProjectRoot 'logs'
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'An elevated administrator session is required to install Windows services.'
@@ -53,6 +54,7 @@ $storageRoot = Join-Path $ProjectRoot 'storage'
 $comfyRoot = 'C:\Users\MetaHosP\ComfyUI'
 $mutablePaths = @(
     $serviceRoot,
+    $logsRoot,
     $storageRoot,
     (Join-Path $comfyRoot 'input'),
     (Join-Path $comfyRoot 'output'),
@@ -99,6 +101,7 @@ $services = @(
     [PSCustomObject]@{ Id = 'Local3D-ComfyUI'; Definition = 'comfyui.xml' }
     [PSCustomObject]@{ Id = 'Local3D-API'; Definition = 'api.xml' }
     [PSCustomObject]@{ Id = 'Local3D-Web'; Definition = 'web.xml' }
+    [PSCustomObject]@{ Id = 'Local3D-Caddy'; Definition = 'caddy.xml' }
 )
 
 # Service-account and dependency changes are install-time settings in WinSW v2.

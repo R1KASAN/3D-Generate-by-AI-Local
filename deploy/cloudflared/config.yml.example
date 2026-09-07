@@ -1,49 +1,10 @@
-# cloudflared config — Approved Origin (outbound tunnel connector)
+# RETIRED REFERENCE ONLY
 #
-# Copy to the origin host as config.yml, alongside the credentials file
-# cloudflared writes when the tunnel is created. Never commit the rendered
-# config.yml or the credentials JSON — see .gitignore and README.md in this
-# directory.
+# Feature 004 does not use a rendered cloudflared configuration, named tunnel,
+# credential file, public hostname, or DNS route. Start the approved test path
+# from deploy/cloudflared/quick-tunnel.md:
 #
-# This file describes an OUTBOUND-ONLY connector (feature 003). It replaces
-# feature 002's inbound origin proxy entirely: there is no public :443
-# listener, no Origin CA certificate, and no Authenticated Origin Pulls on
-# this host. cloudflared dials out to Cloudflare's edge and forwards matched
-# hostnames to the loopback pass-through described in deploy/caddy/Caddyfile.
+#   cloudflared tunnel --url http://127.0.0.1:8080 --loglevel info
 #
-# Required values (fill in on the origin host only):
-#   TUNNEL_ID            - UUID assigned when the tunnel is created
-#   TUNNEL_CREDENTIALS    - path to the credentials JSON on this host
-#   PUBLIC_HOSTNAME       - the accepted production hostname (e.g.
-#                           twin3dgen.mangosgo.com), supplied by the operator
-#                           once authorization and Cloudflare zone access are
-#                           confirmed (see specs/003-outbound-tunnel-entry/spec.md FR-011)
-
-tunnel: ${TUNNEL_ID}
-credentials-file: ${TUNNEL_CREDENTIALS}
-
-# Exposes cloudflared's own health endpoints on loopback:
-#   GET /ready        - 200 once the connector has at least one live edge
-#                        connection (the "origin/connector up" health-chain
-#                        layer - contracts/health-chain.md H1)
-#   Process liveness must be checked separately using the inspected OS.
-# This is genuinely OS-independent: `curl -sf http://127.0.0.1:20241/ready`
-# runs unchanged on Windows (curl.exe ships with Windows 10+), Linux, and
-# macOS, so the origin's health probe does not need to wait on OS
-# confirmation the way the service-manager unit in services/ does. See
-# specs/003-outbound-tunnel-entry/research.md R1.
-metrics: 127.0.0.1:20241
-
-# No inbound port is opened by this process. All traffic arrives over the
-# outbound-initiated tunnel connection only (FR-003).
-ingress:
-  - hostname: ${PUBLIC_HOSTNAME}
-    service: http://127.0.0.1:8443
-    originRequest:
-      # Streaming pass-through: do not buffer request or response bodies at
-      # the connector layer either (contracts/origin-entry.md O3 / FR-014a).
-      disableChunkedEncoding: false
-      noTLSVerify: false
-  # Catch-all: any unmatched hostname gets no response, never the
-  # application. There is exactly one public route (FR-002).
-  - service: http_status:404
+# The former feature-003 named-tunnel example is intentionally not executable
+# so it cannot accidentally expose an unauthorized hostname or stale origin.

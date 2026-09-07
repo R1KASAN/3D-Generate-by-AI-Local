@@ -1,3 +1,10 @@
+# HISTORICAL — do not execute for feature 004
+
+Feature 004 uses one Notebook/PC, loopback Caddy, and an outbound Quick
+Tunnel. This feature-003 split-host/WireGuard procedure is retained only for
+history. Use [single-host-tunnel-setup.md](single-host-tunnel-setup.md) and
+[windows-ai-server-runbook.en.md](windows-ai-server-runbook.en.md).
+
 # Runbook: Outbound connector and private compute binding
 
 **Owner:** Lab server operator | **Frequency:** Setup or recovery

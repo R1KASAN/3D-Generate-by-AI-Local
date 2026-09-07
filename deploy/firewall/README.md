@@ -32,3 +32,6 @@ missing administrator rights, an unassigned approved address, an unconfirmed
 management listener, or a missing Caddy binary. Before ending an administrative
 session after a firewall change, open a new connection and verify management
 access.
+> **Feature 004 notice:** this firewall directory is historical. Do not apply
+> inbound rules, WireGuard, port forwarding, or public application listeners.
+> Feature 004 uses an outbound Quick Tunnel from the single Notebook.

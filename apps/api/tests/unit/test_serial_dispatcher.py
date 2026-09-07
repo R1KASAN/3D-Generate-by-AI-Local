@@ -31,3 +31,16 @@ def test_duplicate_enqueue_does_not_create_a_second_execution() -> None:
     assert dispatcher.claim_next() == "job-a"
     dispatcher.enqueue("job-a")
     assert dispatcher.claim_next() is None
+
+
+def test_pending_job_can_be_cancelled_without_interrupting_active_job() -> None:
+    dispatcher = SerialDispatcher()
+    dispatcher.enqueue("job-a")
+    dispatcher.enqueue("job-b")
+
+    assert dispatcher.claim_next() == "job-a"
+    assert dispatcher.cancel_pending("job-a") is False
+    assert dispatcher.cancel_pending("job-b") is True
+    assert dispatcher.cancel_pending("job-b") is False
+    assert dispatcher.active_job == "job-a"
+    assert dispatcher.pending == ()

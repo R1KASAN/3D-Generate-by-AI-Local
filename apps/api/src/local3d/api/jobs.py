@@ -10,20 +10,27 @@ from fastapi.responses import FileResponse, JSONResponse
 from ..domain.jobs import GenerationJob, JobState
 from ..persistence.jobs import SubmissionLimitError
 from ..services.image_validation import LowStorageError, UploadValidationError
-from ..services.job_service import ExpiredJobError, JobNotFoundError, JobService, ResultNotReadyError
+from ..services.job_service import (
+    ExpiredJobError,
+    JobNotCancellableError,
+    JobNotFoundError,
+    JobService,
+    ResultNotReadyError,
+)
 
 
 router = APIRouter(prefix="/jobs", tags=["jobs"])
 
 
-def _service(request: Request) -> JobService:
-    return cast(JobService, request.app.state.job_service)
+def _service(request: Request) -> JobService | None:
+    return cast(JobService | None, request.app.state.job_service)
 
 
 def _not_found() -> JSONResponse:
     return JSONResponse(
         status_code=404,
         content={"error": {"code": "job_not_found", "message": "Job not found"}},
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -31,6 +38,28 @@ def _not_ready() -> JSONResponse:
     return JSONResponse(
         status_code=409,
         content={"error": {"code": "result_not_ready", "message": "Result is not ready"}},
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _not_cancellable() -> JSONResponse:
+    return JSONResponse(
+        status_code=409,
+        content={
+            "error": {
+                "code": "job_not_cancellable",
+                "message": "Only jobs still waiting in the queue can be cancelled",
+            }
+        },
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+def _unavailable() -> JSONResponse:
+    return JSONResponse(
+        status_code=503,
+        content={"error": {"code": "service_unavailable", "message": "Generation service is temporarily unavailable"}},
+        headers={"Cache-Control": "no-store", "Retry-After": "10"},
     )
 
 
@@ -39,12 +68,13 @@ def _public_job(
     *,
     token: str | None = None,
     queue_position: int | None = None,
+    result_available: bool = False,
 ) -> dict[str, object]:
-    completed = job.status is JobState.COMPLETED
+    completed = job.status is JobState.COMPLETED and result_available
     job_id = str(job.job_id)
     body: dict[str, object] = {
         "job_id": job_id,
-        "status": job.status.value,
+        "status": "running" if job.status is JobState.PROCESSING else job.status.value,
         "progress_percent": job.progress_percent,
         "progress_message": job.progress_message,
         "queue_position": queue_position,
@@ -70,8 +100,11 @@ def _iso(value: datetime) -> str:
 
 @router.post("", status_code=201)
 async def create_job(request: Request, file: UploadFile = File(...)) -> JSONResponse:
+    service = _service(request)
+    if service is None:
+        return _unavailable()
     try:
-        job, token = await _service(request).create_job(
+        job, token = await service.create_job(
             file.file,
             filename=file.filename or "",
             content_type=file.content_type,
@@ -86,6 +119,7 @@ async def create_job(request: Request, file: UploadFile = File(...)) -> JSONResp
         return JSONResponse(
             status_code=507,
             content={"error": {"code": "low_storage", "message": "New jobs are temporarily disabled"}},
+            headers={"Cache-Control": "no-store", "Retry-After": "60"},
         )
     except UploadValidationError as exc:
         message = str(exc)
@@ -95,7 +129,7 @@ async def create_job(request: Request, file: UploadFile = File(...)) -> JSONResp
             status_code, code = 415, "unsupported_image"
         else:
             status_code, code = 422, "corrupt_image"
-        return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}})
+        return JSONResponse(status_code=status_code, content={"error": {"code": code, "message": message}}, headers={"Cache-Control": "no-store"})
     return JSONResponse(
         status_code=201,
         content=_public_job(job, token=token),
@@ -109,12 +143,40 @@ async def get_job(
     job_id: UUID,
     x_job_token: Annotated[str | None, Header(alias="X-Job-Token")] = None,
 ) -> JSONResponse:
+    service = _service(request)
+    if service is None:
+        return _unavailable()
     try:
-        job = await _service(request).read_job(job_id, x_job_token)
+        job = await service.read_job(job_id, x_job_token)
     except (JobNotFoundError, ExpiredJobError):
         return _not_found()
     return JSONResponse(
-        content=_public_job(job, queue_position=_service(request).queue_position(job.job_id)),
+        content=_public_job(
+            job,
+            queue_position=service.queue_position(job.job_id),
+            result_available=service.result_available(job),
+        ),
+        headers={"Cache-Control": "no-store"},
+    )
+
+
+@router.post("/{job_id}/cancel")
+async def cancel_job(
+    request: Request,
+    job_id: UUID,
+    x_job_token: Annotated[str | None, Header(alias="X-Job-Token")] = None,
+) -> JSONResponse:
+    service = _service(request)
+    if service is None:
+        return _unavailable()
+    try:
+        job = await service.cancel_job(job_id, x_job_token)
+    except (JobNotFoundError, ExpiredJobError):
+        return _not_found()
+    except JobNotCancellableError:
+        return _not_cancellable()
+    return JSONResponse(
+        content=_public_job(job, result_available=False),
         headers={"Cache-Control": "no-store"},
     )
 
@@ -125,8 +187,11 @@ async def preview_model(
     job_id: UUID,
     x_job_token: Annotated[str | None, Header(alias="X-Job-Token")] = None,
 ) -> FileResponse | JSONResponse:
+    service = _service(request)
+    if service is None:
+        return _unavailable()
     try:
-        path = await _service(request).read_result(job_id, x_job_token)
+        path = await service.read_result(job_id, x_job_token)
     except (JobNotFoundError, ExpiredJobError):
         return _not_found()
     except ResultNotReadyError:
@@ -140,8 +205,11 @@ async def download_model(
     job_id: UUID,
     x_job_token: Annotated[str | None, Header(alias="X-Job-Token")] = None,
 ) -> FileResponse | JSONResponse:
+    service = _service(request)
+    if service is None:
+        return _unavailable()
     try:
-        path = await _service(request).read_result(job_id, x_job_token)
+        path = await service.read_result(job_id, x_job_token)
     except (JobNotFoundError, ExpiredJobError):
         return _not_found()
     except ResultNotReadyError:

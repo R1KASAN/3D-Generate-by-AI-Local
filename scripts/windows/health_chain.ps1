@@ -1,158 +1,76 @@
 <#
 .SYNOPSIS
-    Layered health probes for the GPU-laptop-owned layers of the feature-003
-    health chain (contracts/health-chain.md H1).
+    Independent health probes for the feature-004 single Notebook.
 
-.DESCRIPTION
-    Implements one independently callable function per laptop-owned layer:
-    private binding, job service, AI engine, and GPU. Each function probes
-    only what it owns - none of them infer their result from another
-    layer's output (FR-023c). The GPU layer specifically uses nvidia-smi
-    rather than the AI engine's own status endpoint, per the decision in
-    evidence/public-deployment/health-probe-decision.md (T027): this lets
-    GPU be reported independently of - and, when run in that order, ahead
-    of - the AI engine, so a driver/hardware fault is distinguishable from
-    an application-only fault.
-
-    The origin-owned layers (provider edge, origin/connector) are probed by
-    a separate, OS-independent mechanism on the approved origin - see
-    contracts/origin-entry.md O7 and research.md R1. This script only
-    covers what the laptop can observe about itself.
-
-.PARAMETER EdgeTunnelAddress
-    The origin's WireGuard tunnel address, used for the private-binding
-    handshake/reachability check.
-
-.PARAMETER WireGuardInterface
-    The WireGuard interface name for the private binding.
-
-.PARAMETER WebPort
-    The loopback port the job service (Next.js) listens on.
-
-.PARAMETER ComfyBaseUrl
-    The loopback base URL for the ComfyUI AI engine.
-
-.PARAMETER HandshakeFreshSeconds
-    Maximum age, in seconds, of the private binding's last handshake to be
-    considered live.
-
-.EXAMPLE
-    pwsh scripts/windows/health_chain.ps1 -All
-#>
+    All local application probes use loopback. Public-route probes are
+    optional and only run when an operator supplies the current Quick Tunnel
+    URL; the URL is never persisted by this script.
+##>
 [CmdletBinding()]
 param(
-    [string]$EdgeTunnelAddress = '10.10.0.1',
-    [string]$WireGuardInterface = 'upstream',
+    [ValidateRange(1, 65535)][int]$CaddyPort = 8080,
     [ValidateRange(1, 65535)][int]$WebPort = 3000,
-    [string]$ComfyBaseUrl = 'http://127.0.0.1:8188',
-    [ValidateRange(1, 3600)][int]$HandshakeFreshSeconds = 180,
-    [switch]$All
+    [ValidateRange(1, 65535)][int]$ApiPort = 8000,
+    [ValidateRange(1, 65535)][int]$ComfyPort = 8188,
+    [string]$WorkflowManifest = 'workflows\hunyuan3d\workflow-manifest.json',
+    [string]$QuickTunnelUrl,
+    [switch]$Json
 )
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function Resolve-WireGuardExecutable {
-    $candidate = Get-Command 'wg.exe' -ErrorAction SilentlyContinue
-    if ($candidate) { return $candidate.Source }
-    $installed = Join-Path ${env:ProgramFiles} 'WireGuard\wg.exe'
-    if (Test-Path -LiteralPath $installed) { return $installed }
-    return $null
+function Probe-Http([string]$Uri) {
+    try { Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 5 -ErrorAction Stop | Out-Null; return $true }
+    catch { return $false }
 }
-
-function Test-PrivateBindingHealth {
-    # Owns: the WireGuard link to the approved origin. A recent handshake
-    # is the only trustworthy signal - an assigned interface address alone
-    # can exist even when the tunnel is not actually passing traffic.
-    $wg = Resolve-WireGuardExecutable
-    if (-not $wg) {
-        return [pscustomobject]@{ Healthy = $false; Detail = 'wg CLI not found' }
-    }
-    try {
-        $output = & $wg show $WireGuardInterface latest-handshakes 2>$null
-        $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-        foreach ($line in $output) {
-            $fields = $line -split '\s+'
-            if ($fields.Count -ge 2) {
-                [long]$timestamp = 0
-                if ([long]::TryParse($fields[1], [ref]$timestamp) -and $timestamp -gt 0) {
-                    $age = $now - $timestamp
-                    if ($age -ge 0 -and $age -le $HandshakeFreshSeconds) {
-                        return [pscustomobject]@{ Healthy = $true; Detail = "handshake age ${age}s" }
-                    }
-                }
-            }
-        }
-        return [pscustomobject]@{ Healthy = $false; Detail = 'no handshake within freshness window' }
-    } catch {
-        return [pscustomobject]@{ Healthy = $false; Detail = "wg query failed: $($_.Exception.Message)" }
-    }
-}
-
-function Test-JobServiceHealth {
-    # Owns: the Next.js job service, which now starts independently of the
-    # private binding (FR-023a). Checked on loopback only - this layer's
-    # health has nothing to do with whether the tunnel is up.
-    try {
-        $listening = Get-NetTCPConnection -State Listen -LocalAddress 127.0.0.1 -LocalPort $WebPort -ErrorAction SilentlyContinue
-        if ($listening) {
-            return [pscustomobject]@{ Healthy = $true; Detail = "listening on 127.0.0.1:$WebPort" }
-        }
-        return [pscustomobject]@{ Healthy = $false; Detail = "not listening on 127.0.0.1:$WebPort" }
-    } catch {
-        return [pscustomobject]@{ Healthy = $false; Detail = "probe failed: $($_.Exception.Message)" }
-    }
-}
-
+function Test-CaddyHealth { [pscustomobject]@{ Healthy = (Probe-Http "http://127.0.0.1:${CaddyPort}/api/v1/health/live"); Detail = "loopback Caddy :$CaddyPort" } }
+function Test-WebHealth { [pscustomobject]@{ Healthy = (Probe-Http "http://127.0.0.1:${CaddyPort}/"); Detail = "frontend through Caddy" } }
+function Test-ApiHealth { [pscustomobject]@{ Healthy = (Probe-Http "http://127.0.0.1:${CaddyPort}/api/v1/health/live"); Detail = "FastAPI through /api/*" } }
+function Test-StorageHealth { try { $root = Split-Path -Parent $WorkflowManifest; [pscustomobject]@{ Healthy = (Test-Path -LiteralPath $root); Detail = 'storage/config path available' } } catch { [pscustomobject]@{ Healthy = $false; Detail = 'storage probe failed' } } }
+function Test-WorkflowHealth { [pscustomobject]@{ Healthy = (Test-Path -LiteralPath $WorkflowManifest); Detail = 'workflow manifest present' } }
+function Test-ComfyHealth { [pscustomobject]@{ Healthy = (Probe-Http "http://127.0.0.1:${ComfyPort}/system_stats"); Detail = "ComfyUI loopback :$ComfyPort" } }
 function Test-GpuHealth {
-    # Owns: GPU hardware/driver presence, probed via nvidia-smi at the OS
-    # level. Deliberately does NOT call the AI engine's /system_stats -
-    # doing so would make this layer's health derive from a layer it must
-    # remain independent of (FR-023c), and would defeat the whole point of
-    # the T027 decision to order GPU ahead of the engine.
-    $nvidiaSmi = Get-Command 'nvidia-smi' -ErrorAction SilentlyContinue
-    if (-not $nvidiaSmi) {
-        return [pscustomobject]@{ Healthy = $false; Detail = 'nvidia-smi not found on PATH' }
+    $tool = Get-Command nvidia-smi -ErrorAction SilentlyContinue
+    if (-not $tool) { return [pscustomobject]@{ Healthy = $false; Detail = 'nvidia-smi unavailable' } }
+    try { & $tool.Source --query-gpu=name --format=csv,noheader 2>$null | Out-Null; [pscustomobject]@{ Healthy = ($LASTEXITCODE -eq 0); Detail = 'GPU driver probe' } }
+    catch { [pscustomobject]@{ Healthy = $false; Detail = 'GPU probe failed' } }
+}
+function Test-QuickTunnelHealth { if (-not $QuickTunnelUrl) { return [pscustomobject]@{ Healthy = $false; Detail = 'Quick Tunnel URL not supplied' } }; [pscustomobject]@{ Healthy = (Probe-Http ($QuickTunnelUrl.TrimEnd('/') + '/')); Detail = 'temporary public route' } }
+function Test-PublicRouteHealth { Test-QuickTunnelHealth }
+function Test-ListenerBoundaryHealth {
+    $ports = @($WebPort, $ApiPort, $CaddyPort, $ComfyPort)
+    $bad = @()
+    foreach ($port in $ports) {
+        $connections = Get-NetTCPConnection -State Listen -LocalPort $port -ErrorAction SilentlyContinue
+        if ($connections | Where-Object { $_.LocalAddress -notin @('127.0.0.1', '::1') }) { $bad += $port }
     }
-    try {
-        $output = & nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>$null
-        if ($LASTEXITCODE -eq 0 -and $output) {
-            return [pscustomobject]@{ Healthy = $true; Detail = ($output -join '; ') }
-        }
-        return [pscustomobject]@{ Healthy = $false; Detail = "nvidia-smi exited $LASTEXITCODE" }
-    } catch {
-        return [pscustomobject]@{ Healthy = $false; Detail = "nvidia-smi invocation failed: $($_.Exception.Message)" }
-    }
+    [pscustomobject]@{ Healthy = ($bad.Count -eq 0); Detail = if ($bad.Count) { 'non-loopback listener detected' } else { 'application ports loopback-only' } }
+}
+function Test-ProcessBoundaryHealth {
+    $definition = Join-Path (Get-Location) 'deploy\windows\services\caddy.xml'
+    [pscustomobject]@{ Healthy = (Test-Path -LiteralPath $definition); Detail = 'single-machine service definition present' }
 }
 
-function Test-AiEngineHealth {
-    # Owns: ComfyUI's own readiness - queue state, model load - which only
-    # its /system_stats endpoint can report. This is legitimate here (the
-    # engine's own health necessarily comes from the engine); it would only
-    # be a violation if the GPU layer above depended on this one instead of
-    # the reverse.
-    try {
-        $response = Invoke-RestMethod -Uri "$ComfyBaseUrl/system_stats" -TimeoutSec 5 -ErrorAction Stop
-        if ($response) {
-            return [pscustomobject]@{ Healthy = $true; Detail = 'system_stats responded' }
-        }
-        return [pscustomobject]@{ Healthy = $false; Detail = 'empty system_stats response' }
-    } catch {
-        return [pscustomobject]@{ Healthy = $false; Detail = "system_stats unreachable: $($_.Exception.Message)" }
-    }
+$results = [ordered]@{
+    Caddy = Test-CaddyHealth
+    Web = Test-WebHealth
+    Api = Test-ApiHealth
+    Storage = Test-StorageHealth
+    Workflow = Test-WorkflowHealth
+    ComfyUI = Test-ComfyHealth
+    GPU = Test-GpuHealth
+    QuickTunnel = Test-QuickTunnelHealth
+    PublicRoute = Test-PublicRouteHealth
+    ListenerBoundary = Test-ListenerBoundaryHealth
+    ProcessBoundary = Test-ProcessBoundaryHealth
 }
-
-if ($All -or $MyInvocation.InvocationName -ne '.') {
-    # Report in the decided order: private binding -> job service -> GPU -> AI engine.
-    $results = [ordered]@{
-        PrivateBinding = Test-PrivateBindingHealth
-        JobService     = Test-JobServiceHealth
-        Gpu            = Test-GpuHealth
-        AiEngine       = Test-AiEngineHealth
-    }
-    foreach ($layer in $results.Keys) {
-        $result = $results[$layer]
-        $state = if ($result.Healthy) { 'HEALTHY' } else { 'UNHEALTHY' }
-        Write-Output "[$layer] $state - $($result.Detail)"
-    }
+if ($Json) { $results | ConvertTo-Json -Depth 4; exit 0 }
+$failed = 0
+foreach ($name in $results.Keys) {
+    $result = $results[$name]
+    $state = if ($result.Healthy) { 'HEALTHY' } else { 'UNHEALTHY' }
+    if (-not $result.Healthy) { $failed++ }
+    Write-Output "[$name] $state - $($result.Detail)"
 }
+exit $(if ($failed -eq 0) { 0 } else { 1 })

@@ -1,578 +1,71 @@
-## ขั้นตอนปฏิบัติสำหรับ feature 003 (2026-09-06)
+# Feature 004 — คู่มือเครื่อง AI แบบ Single-Node
 
-ใช้ [tunnel-setup.md](tunnel-setup.md) และ [public-cutover.md](public-cutover.md) เป็นขั้นตอน public deployment ปัจจุบัน คำสั่งเครือข่ายของ feature 002 ด้านล่างเป็นประวัติเท่านั้น ห้ามนำไปใช้ คงการตรวจสอบฮาร์ดแวร์และ LAN ใน Phase 7–10 และคง trusted-LAN port forward
+นี่คือคู่มือปัจจุบันของ feature 004 เครื่อง Notebook/PC ที่ได้รับ IP
+`161.200.90.4` เป็น server เพียงเครื่องเดียว และรัน ComfyUI, FastAPI,
+Frontend, Caddy และงานบน RTX 5070 ทั้งหมด
 
-GPU laptop เริ่ม job service, API และ AI engine ที่ loopback ได้โดยไม่รอ WireGuard ส่วน private binding retry แยกจากแอป เมื่อ binding กลับมา public path ต้องกลับได้โดยไม่ restart แอป Origin เริ่ม outbound connector และ origin pass-through ที่ loopback ได้แม้ laptop ปิดอยู่ ต้องตรวจ readiness ก่อนรายงาน healthy ตรวจแต่ละ layer แยกกันด้วย `powershell -NoProfile -File scripts/windows/health_chain.ps1 -All` บน laptop ตรวจ connector readiness ที่ origin และตรวจ provider จากภายนอก หาก origin/connector หยุดจะเห็น provider error ไม่ใช่ application fault ให้แก้เฉพาะ layer ที่เสีย หยุดหลังลองสามครั้ง และรอ grace period หลัง dependency กลับมาก่อน restart dependent
-
-งาน live-origin ทั้งหมดเป็น MANUAL/BLOCKED เพราะยังไม่มีช่องทางเข้าถึง origin ที่ได้รับอนุญาต ห้าม probe public remote-management ports การ reboot และตัดเครือข่ายต้องมีหลักฐานจากเครื่องจริง Rollback โดยหยุดและปิด auto-start ของ connector จาก console ที่ได้รับอนุญาต ห้ามลบงานหรือผลลัพธ์และห้ามปิด LAN path ห้ามเปิด inbound HTTPS กลับมา
-
-# Runbook: Windows NVIDIA AI Server — Hardware Gate ถึง Public Deployment (Phase 7–12)
-
-**Owner:** Windows Server Operator; การเปิด public access ต้องผ่าน owner, permission และ management gate ของ feature-002 ก่อนทุกครั้ง | **Frequency:** As needed, ครั้งเดียวต่อการ build server หนึ่งเครื่อง | **Last Updated:** 2026-09-05 | **Last Run:** Not yet run
-
-**Document version:** 3.0 | **Source language:** Thai | **English translation:** [windows-ai-server-runbook.en.md](windows-ai-server-runbook.en.md), version 3.0
-
-> เอกสารนี้เป็นคู่มือทำงานซ้ำได้สำหรับ Phase 7 ถึง Phase 12 การเขียนหรืออ่านเอกสารนี้ไม่ใช่หลักฐานว่า Windows, NVIDIA GPU, ComfyUI, Hunyuan3D, GLB, LAN flow หรือ public deployment ผ่านแล้ว หลักฐานต้องมาจากการรันบนเครื่องจริงเท่านั้น
-
-## Purpose
-
-นำ Windows NVIDIA server จาก "เครื่องเปล่า" ไปถึง "AI server ที่คนนอกเครือข่ายใช้งานได้จริงผ่าน HTTPS" โดยผ่าน gate ตามลำดับ:
-
-| Phase | ผลลัพธ์ที่ต้องพิสูจน์ | Tasks |
-|---|---|---|
-| 7 | runtime ที่ pin แล้วรัน native shape smoke ได้ | T058–T064 |
-| 8 | FastAPI คุย ComfyUI จริงได้ผ่าน adapter เดียวกับ mock | T068, T072–T074 |
-| 9 | สร้าง **textured GLB จริง** ได้ และ isolate ระหว่าง job ได้ | T075–T079 |
-| 10 | เว็บครบ flow ใช้งานได้จาก **เครื่องอื่นใน LAN** | T080–T084 |
-| 11 | เปิด Cloudflare-proxied HTTPS หลังผ่าน gate ของ feature-002 พร้อม per-job token | T007–T026 |
-| 12 | ทดสอบจากนอกเครือข่ายจริง + audit ปิดงานทั้งโปรเจกต์ | T035–T049 |
-
-หยุดทันทีเมื่อ task ใด FAIL หรือ BLOCKED ห้ามข้าม gate เพื่อรายงานความคืบหน้า **Phase 11 มีเงื่อนไขพิเศษ**: ต้องได้ owner approval, written network permission และพิสูจน์ management path ของ origin เป็นลายลักษณ์อักษรก่อนแตะ public infrastructure ใดๆ (ดู feature-002 T007, T008, T021 และ T055) — เป็นเงื่อนไขถาวรของ phase นี้ ไม่ใช่แค่ checklist ทั่วไป
-
-## Hardware boundary (ข้อบังคับ อ่านก่อนทุกอย่าง)
-
-**เครื่องที่รัน AI server ต้องเป็น Windows + NVIDIA GPU เท่านั้น**
-
-| เครื่อง | บทบาท | ทำอะไรได้ / ไม่ได้ |
-|---|---|---|
-| Windows + NVIDIA GPU | **AI server จริง** | รัน ComfyUI, Hunyuan3D, FastAPI, GPU generation, LAN service ทั้งหมด — evidence ทุกชิ้นใน Phase 7–10 ต้องมาจากเครื่องนี้ |
-| macOS (MacBook ของ Owner) | **เครื่องพัฒนาเท่านั้น** | เขียนโค้ด, รัน mock adapter, รัน test ที่ไม่ใช้ GPU — **ห้ามใช้เป็น AI server และห้ามใช้ผล mock แทน Windows evidence** |
-
-เหตุผล: MacBook ไม่มี NVIDIA GPU/CUDA จึงรัน Hunyuan3D จริงไม่ได้ ผลจาก macOS ที่ผ่านคือ mock lane (Phase 6 ปิดไปแล้ว) ไม่ใช่หลักฐานของ hardware gate นี้
-
-ถ้ามีใครเสนอให้รัน AI server บน macOS หรือใช้ผล macOS ปิด task Phase 7–10 ให้ปฏิเสธและรายงาน `BLOCKED`
-
-## Network boundary (สำคัญสำหรับ Phase 11)
-
-**อัปเดต 2026-09-05:** โปรเจกต์นี้ไม่ได้ใช้วิธี port forward ผ่าน router บ้าน/ที่ทำงานแล้ว การออกแบบที่ร้องขอคง Public IP ที่จัดสรรตรงจากมหาวิทยาลัย (`161.200.90.4` ตามบันทึกข้อความลงวันที่ 26 ธ.ค. 2567 จากภาควิชาวิศวกรรมไฟฟ้า — ดู `evidence/public-deployment/allocation-memo-review.md` ว่าเอกสารฉบับนั้นครอบคลุมอะไรจริง) สำหรับ **edge server** ซึ่งเป็นคนละเครื่องกับ Windows GPU server ที่ runbook นี้อธิบายอยู่ การ assign และ reachability จริงยังเป็น deployment gate GPU server ไม่ได้ถือ public IP เอง แต่เชื่อมต่อออกไปหา edge ผ่าน WireGuard tunnel ดูรายละเอียดเต็มที่ `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md` และ `docs/operations/public-cutover.md`
-
-- ไม่มีการตัดสินใจเรื่อง "router ของ operator" อีกต่อไป — ผู้มีอำนาจอนุมัติคือ **border firewall ของมหาวิทยาลัย** ไม่ใช่ router ทั่วไป ต้องอนุญาต inbound `443/tcp` จาก Cloudflare ranges และ `51820/udp` จากทุก source มาที่ `161.200.90.4` เท่านั้น โดยไม่ขอเปิด port 80
-- Windows GPU server อยู่บนเครือข่ายจริงที่มันเสียบอยู่ตอนนั้น (มหาวิทยาลัย/บ้าน/hotspot มือถือ) และเข้าถึงได้ผ่าน tunnel เท่านั้น — ออกแบบมาให้ย้ายเครือข่ายได้อิสระโดยเจตนา ห้าม forward port บน router ของเครื่องนั้นเอง ไม่มีส่วนใดของ deployment นี้พึ่งพาสิ่งนั้น
-- `161.200.90.3` ถูกจัดสรรไว้ใช้งานอื่น ห้ามตั้งค่า, forward, หรือ probe ด้วยสิ่งใดที่เกี่ยวข้องกับโปรเจกต์นี้เด็ดขาด
-- domain ที่ใช้จะชี้ไปที่ IP คงที่ของ edge server (`161.200.90.4`) ไม่ใช่ IP เครือข่ายของ GPU server เองซึ่งเปลี่ยนไปตามที่มันย้ายไป
-
-## Source of truth
-
-อ่านก่อนเปลี่ยนไฟล์หรือติดตั้ง software:
-
-- [Constitution](../../.specify/memory/constitution.md)
-- [Specification](../../specs/001-local-3d-generation/spec.md)
-- [Plan](../../specs/001-local-3d-generation/plan.md)
-- [Tasks](../../specs/001-local-3d-generation/tasks.md)
-- [Research decisions](../../specs/001-local-3d-generation/research.md)
-- [Quickstart and gates](../../specs/001-local-3d-generation/quickstart.md)
-- [Cloudflare public-entry specification](../../specs/002-cloudflare-public-entry/spec.md)
-- [Cloudflare public-entry plan](../../specs/002-cloudflare-public-entry/plan.md)
-- [Cloudflare public-entry tasks](../../specs/002-cloudflare-public-entry/tasks.md)
-- [Cloudflare public-entry quickstart](../../specs/002-cloudflare-public-entry/quickstart.md)
-- [AI runtime source register](../reference/ai-runtime-sources.md)
-- [GenerationAdapter contract](../../specs/001-local-3d-generation/contracts/generation-adapter.md)
-- [Workflow-manifest contract](../../specs/001-local-3d-generation/contracts/comfyui-workflow-manifest.md)
-
-หากวิดีโอหรือ README ภายนอกขัดกับเอกสารข้างต้น ให้เอกสารใน project และ owner-approved decision มีผลเหนือกว่า
-
-## Scope boundary (อ่านก่อนเริ่ม)
-
-**อยู่ในขอบเขตของ runbook นี้:** Phase 7 → 8 → 9 → 10 → 11 → 12 ตามลำดับ จบที่ external user ใช้งานผ่าน HTTPS ได้จริง
-
-**อยู่นอกขอบเขต — ห้ามทำแม้ผ่าน Phase 11-12 แล้ว:**
-
-| หัวข้อ | สถานะ | เหตุผล |
-|---|---|---|
-| SDXL re-texturing / ControlNet texture projection | Post-MVP quality lane | เป็น reference เท่านั้น ห้ามเพิ่มเข้า MVP workflow, dependency หรือ task completion criteria |
-| Blender retopology, Quad Remesher, texture painting, texture baking | Post-MVP quality lane | เป็นงาน manual หลัง MVP ไม่ใช่ส่วนของ FastAPI/ComfyUI pipeline |
-| แก้ access control จาก "public entry + per-job token" เป็นแบบอื่น | ต้อง Owner ตัดสินใจใหม่ | owner gate ของ feature-002 เป็นแหล่งอ้างอิงนโยบายปัจจุบัน การเปลี่ยนต้องขออนุมัติใหม่เป็นลายลักษณ์อักษร ห้ามเปลี่ยนเอง |
-| เปิด public ก่อน owner, permission และ management gate ของ feature-002 จะผ่าน | ต้องหยุดเสมอ | ดูหัวข้อ Cloudflare public-entry ปัจจุบันด้านล่าง เป็นเงื่อนไขที่ยกเว้นไม่ได้ |
-
-**เกี่ยวกับ Public IP:** ไม่ใช่ secret แต่ไม่แนะนำให้พิมพ์ตัวเลข IP ตรงๆ ลงในแชท/LINE — ให้เก็บไว้ใน protected origin configuration และใช้ evidence แบบ mask ของ feature-002 แทน
-
-**ค่าที่ห้ามยึดเป็น requirement:** ตัวเลข tuning ที่พบในวิดีโอหรือ tutorial ภายนอก เช่น `steps=100`, octree resolution `900–1000` หรือ face count `1,000,000` เป็น **ค่าทดลอง** ไม่ใช่ข้อกำหนดของ MVP ต้องพิสูจน์กับ VRAM ของเครื่องจริงและบันทึกค่าที่ใช้จริงลง manifest
-
-**CUDA 12.6** เป็น planning candidate ที่สอดคล้องกับ wrapper แต่ห้ามติดตั้งตามวิดีโอแบบ blind ต้องผ่าน T058–T060 และ pin เวอร์ชันลง manifest ก่อน
-
-**สถานะของวิดีโอ/tutorial ภายนอก:** เป็น *reference only* ตาม [source register](../reference/ai-runtime-sources.md) ห้ามใช้แทน Windows evidence จริง และห้ามใช้ปิด task ใด ๆ
-
-## ComfyUI API integration rules
-
-กฎเหล่านี้มีผลตั้งแต่ Phase 7 และบังคับต่อเนื่องทุก phase หลังจากนั้น
-
-**เส้นทางที่อนุญาต:**
+## ขอบเขตที่ห้ามเปลี่ยน
 
 ```text
-Browser
-  -> FastAPI only
-      -> upload image safely
-      -> create opaque Job ID + isolated directory
-      -> map allowed API-workflow fields
-      -> POST /prompt to 127.0.0.1:8188
-      -> observe /ws, /queue, /history
-      -> validate exactly one GLB
-      -> publish controlled result to application storage
-      -> browser preview/download
+ผู้ใช้ -> HTTPS ชั่วคราว -> Cloudflare Quick Tunnel
+-> cloudflared (ขาออก) -> Caddy 127.0.0.1:8080
+-> Web 127.0.0.1:3000 / API 127.0.0.1:8000
+-> ComfyUI 127.0.0.1:8188 -> RTX 5070
 ```
 
-**สิ่งที่ห้ามเด็ดขาด:**
+ห้ามเพิ่ม Edge Server, WireGuard, port forwarding, DNS สาธารณะ, custom
+hostname หรือ inbound firewall rule IP นี้เป็นเพียง IP ของเครื่อง ไม่ใช่ URL
+ของแอป FastAPI และ ComfyUI ต้องไม่รับ connection จาก Internet โดยตรง
 
-```text
-Browser -> ComfyUI directly
-User filename/path -> workflow output path
-Shared ComfyUI input/output without Job ID prefix
-overwrite=True on shared input directory
-Search newest output file
-Automatic resubmit after timeout/restart
-Expose :8188, :8000, :3000, or :3389 publicly
-```
-
-ต้องใช้ workflow ที่ export เป็น **API format** เท่านั้น (ไม่ใช่ไฟล์ workflow ปกติ) และ prompt ID ของ ComfyUI ต้องไม่รั่วออกไปยัง public API model
-
-## Prerequisites
-
-- [x] Owner ยืนยัน GitHub repository ปลายทางแล้ว: [`R1KASAN/3D-Generate-by-AI-Local`](https://github.com/R1KASAN/3D-Generate-by-AI-Local) visibility `public` — baseline push แล้ว (ดู Step 0)
-- [ ] เครื่องเป้าหมายเป็น **Windows + NVIDIA GPU** ไม่ใช่ macOS (ดู Hardware boundary)
-- [ ] Operator มีสิทธิ์ local administrator เฉพาะเมื่อ installer ที่ pin แล้วต้องใช้สิทธิ์นั้น
-- [ ] Operator มีสิทธิ์เขียนใน project root, evidence directory และ local runtime directory
-- [ ] Windows PC มีพื้นที่ว่างเพียงพอสำหรับ runtime/model ตาม manifest
-- [ ] ComfyUI, FastAPI และ browser ยังไม่ถูกเปิดออก Internet ก่อนถึง Phase 11; ports `3000`, `8000`, `8188`, `3389` ต้องเป็น private เสมอ
-- [ ] Operator อ่าน artifact ใน Source of truth ครบแล้ว
-- [ ] (สำหรับ public entry ของ feature-002) มี written permission จาก IT มหาวิทยาลัยสำหรับ inbound 443/tcp จาก Cloudflare ranges และ 51820/udp จากทุก source มาที่ origin ที่อนุมัติบันทึกแล้ว โดยไม่ขอเปิด port 80 — ไม่มีการตัดสินใจเรื่อง router ของ operator ใน topology นี้
-
-## Procedure
-
-### Step 0: Clone และตรวจ Git baseline บนเครื่อง Windows
-
-> **สถานะ: baseline สร้างและ push เรียบร้อยแล้ว** operator ไม่ต้องสร้าง commit หรือ repository ใหม่ หน้าที่ของขั้นนี้คือ *ดึงและตรวจสอบ* ว่าเครื่อง Windows ได้ source ตรงกับที่ owner review แล้ว
-
-| รายการ | ค่า |
-|---|---|
-| Repository | [`R1KASAN/3D-Generate-by-AI-Local`](https://github.com/R1KASAN/3D-Generate-by-AI-Local) |
-| Visibility | `public` (owner ยืนยันแล้ว) |
-| Default branch | `main` |
-| ขอบเขต baseline | source/spec/docs — ผ่าน secret review, ไม่มี model weights, runtime artifacts หรือ credentials |
-
-Clone บนเครื่อง Windows:
+## ตรวจสอบก่อนเปิด Quick Tunnel
 
 ```powershell
-Set-Location <PARENT_DIRECTORY>
-git clone https://github.com/R1KASAN/3D-Generate-by-AI-Local.git
-Set-Location 3D-Generate-by-AI-Local
-git log -1 --format=%H
-git status --short
+Get-Service Local3D-ComfyUI,Local3D-API,Local3D-Web,Local3D-Caddy
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/health_chain.ps1 -Json
 ```
 
-**Expected result:** ได้ commit เดียวกับที่ Owner ประกาศไว้ และ `git status --short` ว่าง
+ลำดับที่คาดหวังคือ ComfyUI → API → Web → Caddy และ listener ต้องเป็น
+`127.0.0.1:8188`, `127.0.0.1:8000`, `127.0.0.1:3000`, `127.0.0.1:8080`
+เท่านั้น หากพบ `0.0.0.0` หรือ IP ที่ได้รับมอบหมายให้หยุดทันที
 
-**If it fails:** หยุดเป็น `BLOCKED` บันทึก command/error ที่ sanitize แล้วใน `evidence/setup/git-baseline.md` และขอ owner ยืนยัน repository หรือ access ห้ามสร้าง repository หรือ commit baseline ใหม่เอง
+ตรวจ Caddy ด้วย `API_UPSTREAM=http://127.0.0.1:8000`,
+`WEB_UPSTREAM=http://127.0.0.1:3000` และทดสอบ `/`,
+`/api/v1/health/live`, `/api/v1/health/ready`, `/api/v1/health/engine`
+ผ่าน `http://127.0.0.1:8080`
 
-สร้าง local environment file จาก template (ไฟล์ `.env` จริงถูก ignore และต้องไม่ถูก commit):
+## Quick Tunnel สำหรับทดสอบเท่านั้น
+
+เมื่อ local chain พร้อมแล้วจึงรัน:
 
 ```powershell
-Copy-Item .env.example .env
-Copy-Item apps\api\.env.example apps\api\.env
-Copy-Item apps\web\.env.example apps\web\.env
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/start_quick_tunnel.ps1 -CloudflaredPath cloudflared
 ```
 
-**Expected result:** มี `.env` สำหรับ local run และ `git status --short` ยังคงว่าง (ยืนยันว่า `.gitignore` ทำงาน)
+ใช้เฉพาะ URL สุ่ม `https://<random>.trycloudflare.com` ที่แสดงใน session นั้น
+URL นี้เป็น public และชั่วคราว ไม่ใช่การยืนยันตัวตน ห้ามบันทึกลง Git ห้ามสร้าง
+DNS ห้ามใช้ named tunnel และห้ามชี้ไปที่ port อื่นนอกจาก
+`http://127.0.0.1:8080`
 
-**If it fails:** หาก `.env` โผล่ใน `git status` ให้หยุดทันทีและแจ้ง owner ห้าม commit
-
-#### ก่อน commit ใด ๆ ในอนาคต (กฎถาวร)
-
-ทุกครั้งที่ operator จะ commit evidence หรือ script ใหม่ ต้อง scan ก่อน ห้ามใช้ `git add .` โดยไม่ตรวจไฟล์ ห้าม commit `.env` จริง, credentials, password hash, token, private key, production/public IP, router configuration, model weights, ComfyUI output/temp, local storage, logs, caches หรือ `node_modules`
+ตัว launcher จะแสดง `TEMPORARY NON-PRODUCTION URL` เพียงหนึ่ง URL ต่อ session
+ให้ใช้ URL บรรทัดนี้เท่านั้น URL จากรอบก่อนอาจแสดง Cloudflare Error 1033 เมื่อ
+connector เดิมหยุดทำงาน หากเปิด Tunnel จาก PowerShell แบบ Administrator แล้ว
+หยุดจากหน้าต่างปกติไม่ได้ ให้รัน:
 
 ```powershell
-git status --short
-rg -n --hidden --glob '!node_modules/**' --glob '!.git/**' --glob '!*.pdf' `
-  '(?i)(api[_-]?key|secret|password|token|-----begin .*private key-----)' <PATHS_TO_STAGE>
-git add <REVIEWED_PATHS_ONLY>
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/windows/stop_quick_tunnel.ps1 -Elevate
 ```
 
-**Expected result:** ไม่มี secret และไม่มี runtime artifact เข้า commit
-
-**If it fails:** เอาข้อมูลลับออก, ย้ายไป `.env` ที่ ignore แล้ว scan ซ้ำ ห้าม commit หรือ push จนกว่าจะสะอาด
-
----
-
-## Phase 7 — Windows compatibility gate (T058–T064)
-
-### Step 1: T058 — เก็บ hardware/runtime inventory
-
-สร้างและรัน `scripts/windows/capture_gpu_baseline.ps1` ตาม task T058 แล้วบันทึก output ที่ sanitize ใน `evidence/windows/gpu-baseline.md`
-
-```powershell
-nvidia-smi
-py -3.12 -c "import platform; print(platform.platform())"
-py -3.12 -c "import torch; print(torch.__version__); print(torch.cuda.is_available()); print(torch.cuda.get_device_name(0)); print(torch.cuda.get_device_properties(0).total_memory)"
-py -3.12 -c "import sqlite3; print(sqlite3.sqlite_version)"
-Get-PSDrive -PSProvider FileSystem
-```
-
-**Expected result:** ได้ Windows version, GPU model, driver, VRAM, Python, PyTorch, CUDA availability, SQLite version และ disk capacity จริง
-
-**If it fails:** อย่าติดตั้งหรือเปลี่ยน version แบบสุ่ม บันทึก component ที่หาย/ผิดเวอร์ชันและหยุด `BLOCKED`
-
-### Step 2: T059 — ติดตั้งและ pin ComfyUI/custom nodes
-
-ใช้ [runtime source register](../reference/ai-runtime-sources.md) เพื่ออ่านแนวทาง installation แต่เลือก revision, package, model และ node จาก workflow manifest ที่ผ่านการ review เท่านั้น
-
-- Bind ComfyUI กับ loopback เช่น `127.0.0.1:8188`
-- บันทึก commit/hash/version/license ของ ComfyUI, wrapper, custom nodes และ model files
-- ห้ามให้ ComfyUI Manager update node แบบ unattended
-- restart แล้วตรวจ health จาก localhost เท่านั้น
-
-```powershell
-Invoke-WebRequest http://127.0.0.1:8188/object_info -UseBasicParsing
-```
-
-**Expected result:** ComfyUI ตอบจาก loopback และ revision/hash ตรง manifest
-
-**If it fails:** หยุดก่อน T060; บันทึก exact mismatch โดยไม่เผย path/user credential แล้วแก้ manifest หรือ runtime ตาม owner decision
-
-### Step 3: T060 — ตรวจ PyTorch/CUDA/native wheel compatibility
-
-สร้างและรัน `scripts/windows/verify_hunyuan_runtime.ps1` ตาม task T060 ห้าม auto-upgrade dependencies เพื่อให้ import ผ่าน
-
-```powershell
-py -3.12 -c "import torch; assert torch.cuda.is_available(); print(torch.version.cuda); print(torch.cuda.get_device_name(0))"
-```
-
-**Expected result:** Python environment ที่ใช้รันจริง import required packages ได้, CUDA พร้อมใช้งาน, GPU ถูกเลือกถูกต้อง และไม่มี version drift จาก manifest
-
-**If it fails:** บันทึก installed version และ error ที่ sanitize ใน `evidence/windows/runtime-compatibility.md`; หยุด `BLOCKED` เพื่อขอ owner decision ก่อนเปลี่ยน dependency
-
-### Step 4: T061 — Native Hunyuan3D 2.1 shape smoke
-
-export workflow ทั้ง editable และ API format ไปยัง paths ที่ task T061 ระบุ รันผ่าน API และเก็บ shape artifact ที่ parse ได้
-
-**Expected result:** shape smoke ผ่านและมี evidence ใน `evidence/windows/shape-smoke.md`
-
-**If it fails:** เก็บ workflow hash, node/version mismatch และ safe error; ห้ามใช้ GUI-only success เป็นผลผ่าน API
-
-> Shape-only artifact ไม่ใช่ textured GLB และไม่ปลดล็อก MVP acceptance
-
-### Step 5: T062 — ตรวจ manifest/hash และ `/object_info`
-
-สร้างและรัน `scripts/verify/verify_comfy_manifest.py` ตาม task T062 และ deliberate mismatch fixture ที่ task กำหนด
-
-**Expected result:** runtime ที่ pin แล้ว PASS; missing/changed node หรือ hash mismatch FAIL closed
-
-**If it fails:** หยุดก่อน T063; บันทึก mismatch ใน `evidence/windows/object-info-check.md` โดยไม่แก้ version แบบ guessing
-
-### Step 6: T063 — Windows GPU validation checklist
-
-สร้าง [windows-gpu-validation.md](windows-gpu-validation.md) ตาม task T063 และกรอกทุก prerequisite พร้อม command output, artifact paths และ verdict `PASS`, `FAIL` หรือ `BLOCKED`
-
-**Expected result:** checklist ไม่มีข้อที่ถูกข้าม และทุกผลอ้าง evidence จริง
-
-**If it fails:** ระบุ blocker ที่เล็กที่สุดและ owner action ที่ต้องการ
-
-### Step 7: T064 — ออก Phase 7 gate verdict
-
-สร้าง `evidence/windows/phase-7-gate.md` ด้วยรูปแบบ:
-
-```text
-Gate: Phase 7 — Windows ComfyUI and Hunyuan3D Compatibility
-Date/time and operator:
-Host/environment:
-Pinned revisions/hashes:
-Tasks T058–T063 and evidence links:
-Verdict: PASS | FAIL | BLOCKED
-Blocker and smallest owner action:
-```
-
-**Expected result:** PASS ได้ต่อเมื่อ T058–T063 ผ่านทั้งหมด มิฉะนั้นต้องเป็น FAIL หรือ BLOCKED อย่างซื่อสัตย์
-
-**If it fails:** ห้ามไป Phase 8 ห้ามไป LAN หรือ public deployment
-
----
-
-## Phase 8 — FastAPI-to-ComfyUI adapter (T068, T072–T074)
-
-> เข้า phase นี้ได้เมื่อ `evidence/windows/phase-7-gate.md` = PASS เท่านั้น
-
-**เป้าหมาย:** เปลี่ยนจาก mock adapter เป็น adapter จริง โดยใช้ contract เดียวกัน และไม่ให้ ComfyUI protocol/ID รั่วไปถึง frontend
-
-### Step 8: T068 — hardware-gated adapter smoke test
-
-สร้าง `apps/api/tests/integration/test_comfy_adapter_smoke.py` ตาม task T068
-
-**Expected result:** test collection ผ่านบน macOS พร้อม documented skip และบนเครื่อง Windows fail ตรงจุด assertion ที่คาดไว้ (adapter/runtime ยังไม่มี)
-
-**If it fails:** ห้ามแก้ test ให้ผ่านแบบหลอก บันทึก error จริงและหยุด
-
-### Step 9: T072 — implement adapter จริง
-
-สร้าง `apps/api/src/local3d/adapters/generation/comfy.py` ตาม task T072
-
-```powershell
-$env:GENERATION_ADAPTER="comfy"
-uv run --project apps/api pytest apps/api/tests/contract/test_generation_adapter.py
-```
-
-**Expected result:** adapter suite เดียวกันผ่านทั้ง mock และ comfy โดยไม่คืน prompt ID ออกทาง public model
-
-**If it fails:** ห้ามแก้ contract ให้หลวมลงเพื่อให้ผ่าน หยุดและรายงาน mismatch
-
-### Step 10: T073 — manifest verification + fail-closed readiness
-
-แก้ `apps/api/src/local3d/adapters/generation/factory.py` และ `apps/api/src/local3d/main.py` ตาม task T073
-
-**Expected result:** mock test ยังเขียว และเมื่อ manifest จริงไม่ถูกต้อง `/api/v1/health/ready` ต้องคืน 503 แบบปลอดภัย (ไม่เผย path/internal detail)
-
-**If it fails:** ห้ามปล่อยให้ readiness ผ่านทั้งที่ manifest ไม่ตรง — ต้อง fail closed เสมอ
-
-### Step 11: T074 — real integration smoke test
-
-```powershell
-$env:RUN_COMFY_INTEGRATION="1"
-uv run --project apps/api pytest apps/api/tests/integration/test_comfy_adapter_smoke.py
-```
-
-บันทึก request/result ที่ sanitize แล้วใน `evidence/windows/comfy-adapter-smoke.md`
-
-**Expected result:** ผ่านโดย ComfyUI bind อยู่ที่ loopback เท่านั้น
-
-**If it fails:** เก็บ error ที่ sanitize แล้ว หยุดก่อน Phase 9
-
----
-
-## Phase 9 — Real textured-GLB validation (T075–T079)
-
-> นี่คือ phase ที่พิสูจน์ผลลัพธ์จริงของ MVP ไม่ใช่แค่ shape
-
-### Step 12: T075 — รัน full shape+texture workflow
-
-pin และรัน workflow ที่ `workflows/hunyuan3d/editable/hunyuan3d-textured-glb.json` และ `workflows/hunyuan3d/api/hunyuan3d-textured-glb.json`
-
-**Expected result:** หนึ่ง job ที่ส่งผ่าน API สร้าง GLB ที่ไม่ว่างเปล่าได้ **หนึ่งไฟล์พอดี** และมี evidence ใน `evidence/windows/textured-generation-1.md`
-
-**If it fails:** บันทึก workflow hash, node error และ VRAM ที่ใช้; ถ้า OOM ให้ลดค่าที่ manifest อนุญาตและบันทึกค่าจริง ห้ามลด acceptance criterion
-
-### Step 13: T076 — validate GLB จริง
-
-```powershell
-python scripts/verify/validate_glb.py <GLB_PATH>
-```
-
-บันทึก mesh, primitive, UV, material, texture, size และ SHA-256 ใน `evidence/windows/textured-glb-validation.md`
-
-**Expected result:** ทุก property ที่ required ผ่านครบ
-
-**If it fails:** ห้ามใช้ GLB ที่ไม่มี texture/UV เป็นผลผ่าน หยุดและรายงาน
-
-### Step 14: T077 — สอง job เรียงกัน ตรวจ isolation
-
-**Expected result:** GLB ทั้งสองผ่าน validation, isolate จากกัน, และจำนวน GPU job ที่ active สูงสุด = 1 พร้อมบันทึก Job ID, hash, duration, peak VRAM, overwrite check ใน `evidence/windows/two-job-serial.md`
-
-**If it fails:** ถ้าพบ job ปนกันหรือ concurrent > 1 ให้หยุดทันที เป็นปัญหา isolation ที่ห้ามข้าม
-
-### Step 15: T078 — recovery matrix
-
-รัน `scripts/windows/run_recovery_matrix.ps1` ครอบคลุม engine failure, timeout, disconnect, missing output, backend restart และ ComfyUI restart
-
-**Expected result:** `evidence/windows/recovery-matrix.md` แสดง terminal/reconciled state ที่ปลอดภัยและ **duplicate execution = 0**
-
-**If it fails:** ถ้าพบ auto-resubmit หรืองานซ้ำ ให้หยุด เป็นการละเมิดกฎ ComfyUI API integration
-
-### Step 16: T079 — ออก Phase 9 gate verdict
-
-สร้าง `evidence/windows/phase-9-gate.md` พร้อม pinned revision/hash set
-
-**Expected result:** PASS เมื่อ T075–T078 ผ่านครบ และไม่ใช้ shape-only evidence แทน textured completion
-
-**If it fails:** ห้ามไป Phase 10
-
----
-
-## Phase 10 — LAN end-to-end delivery (T080–T084)
-
-> จบ phase นี้ = Owner เริ่มใช้งาน AI server และเว็บได้จริงผ่าน LAN
-
-### Step 17: T080 — Windows services
-
-สร้าง `deploy/windows/services/api.xml`, `web.xml`, `comfyui.xml` (WinSW) โดย bind loopback ทั้งหมด แล้วรัน `scripts/windows/verify_services.ps1`
-
-**Expected result:** `evidence/lan/service-startup.md` บันทึก restricted identity, dependency order, service healthy และ generation จริงสำเร็จหลังรันเป็น service
-
-**If it fails:** ห้าม bind service ออก 0.0.0.0 เพื่อให้ผ่าน หยุดและรายงาน
-
-### Step 18: T081 — reboot recovery
-
-รัน `scripts/windows/verify_reboot_recovery.ps1`
-
-**Expected result:** `evidence/lan/reboot-recovery.md` พิสูจน์ว่า start อัตโนมัติหลัง reboot, reconcile state และสร้าง job ใหม่สำเร็จ **โดยไม่ต้องเปิด terminal เอง**
-
-**If it fails:** ถ้าต้องเปิด terminal ด้วยมือถือว่าไม่ผ่าน
-
-### Step 19: T082 — LAN full flow จากเครื่องที่สอง
-
-สร้างและรัน checklist ที่ `docs/operations/lan-acceptance.md`
-
-**Expected result:** เครื่องที่สองใน LAN ทำได้ครบ: upload → queued/processing → textured preview (rotate/zoom/pan/reset) → download ที่ byte-identical บันทึกใน `evidence/lan/full-flow.md`
-
-**If it fails:** บันทึกจุดที่ flow ขาดและหยุด
-
-### Step 20: T083 — LAN security checklist
-
-สร้าง `docs/operations/lan-security-checklist.md` และรัน `scripts/verify/test_lan_boundary.py`
-
-**Expected result:** `evidence/lan/isolation-and-ports.md` พิสูจน์ว่า cross-job access ถูกปฏิเสธ และ **port 8000 กับ 8188 เข้าไม่ได้จากเครื่อง LAN** ขณะที่ทางเข้า LAN ที่อนุมัติแล้วยังทำงาน
-
-**If it fails:** ถ้า 8000/8188 เข้าถึงได้จาก LAN ให้หยุดทันที เป็น security boundary ที่ห้ามผ่อน
-
-### Step 21: T084 — ออก Phase 10 gate verdict
-
-สร้าง `evidence/lan/phase-10-gate.md` พร้อม command, timestamp, Job ID, log, screenshot และ GLB hash
-
-**Expected result:** PASS เมื่อ T080–T083 ผ่านครบ
-
-**If it fails:** รายงาน BLOCKED พร้อม blocker ที่เล็กที่สุด
-
----
-
----
-
-## Phase 11 — Cloudflare public entry และ external acceptance (feature 002, ถูกแทนที่แล้ว)
-
-**ถูกแทนที่ด้วย feature 003 แล้ว** ทั้ง section นี้อธิบาย architecture แบบ
-inbound-proxy ของ feature 002 (Full-strict TLS, Authenticated Origin Pulls,
-Origin CA certificate, และ web service ที่ bind กับ WireGuard tunnel
-address) เก็บไว้เป็นบันทึกประวัติเท่านั้น แหล่งอ้างอิงปัจจุบันคือ
-`specs/003-outbound-tunnel-entry/tasks.md` และ `quickstart.md` ซึ่งเปลี่ยน
-จาก inbound proxy เป็น **outbound** Cloudflare Tunnel connector: origin ไม่มี
-public listener เลย ไม่ถือ certificate secret ใด ๆ และ web service เริ่มทำงาน
-ได้อิสระจาก WireGuard binding แล้ว (ดู
-`specs/003-outbound-tunnel-entry/contracts/compute-link.md`) **ห้ามทำตาม
-ขั้นตอนด้านล่างนี้บน feature-003 deployment** เพราะเป็น design ที่ถูกถอดออก
-จริง ไม่ใช่แค่เปลี่ยนชื่อ
-
-ลำดับ public-entry เดิม T085–T097 ถูกถอนออกและ **ห้ามนำไปรัน** แม้ภายใต้
-feature 002 เช่นกัน
-
-### Gate และลำดับปัจจุบัน
-
-1. ปิด owner/model-license/territory gate และขอ written permission ให้ครบ
-   เฉพาะ `443/tcp` จาก Cloudflare ranges ปัจจุบัน และ `51820/udp` จากทุก
-   source ไม่ต้องเปิด port 80
-2. ตัดสินใจและพิสูจน์ management path ของ origin ด้วย connection ใหม่
-   ก่อนใช้ default-deny rule ใดๆ
-3. ตั้งค่า Cloudflare หลัง gate ครบ: application hostname เดียวแบบ proxied,
-   Full (strict), Authenticated Origin Pulls และ Origin CA ห้ามสร้าง DNS-only
-   record สำหรับ tunnel endpoint
-4. ติดตั้งและ validate Caddy ที่ origin: listener มีเฉพาะ 443, บังคับ provider
-   client certificate, ไม่บันทึก job credential ใน project-controlled logs และ
-   proxy ไปเฉพาะ WireGuard address ของ laptop
-5. Apply และ verify boundary บนเครื่องเป้าหมาย แล้วรัน external, degraded-state,
-   mobility และ recovery checks ตาม quickstart ของ feature ปัจจุบัน
-
-### Network boundary (topology ปัจจุบัน)
-
-- Edge: `443/tcp` รับจาก Cloudflare ranges เท่านั้น; `51820/udp` รับจาก
-  ทุก source สำหรับ WireGuard ที่ authenticate แล้ว; management รับจาก trusted
-  source ที่อนุมัติ; อื่นๆ deny ทั้งหมด
-- GPU laptop: `10.10.0.2:3000` รับจาก `10.10.0.1/32` ผ่าน WireGuard เท่านั้น;
-  FastAPI และ ComfyUI bind ที่ loopback; RDP ถูก deny
-- ไม่มี operator-router port forwarding, ไม่มี public port 80 และไม่มี LAN
-  `portproxy` หลัง cutover ห้ามสร้าง LAN proxy เดิมกลับมา
-- physical address ของ laptop ไม่อยู่ใน public configuration; ย้าย network แล้ว
-  ห้ามต้องแก้ DNS, proxy หรือ tunnel-address
-
-### หลักฐานที่ต้องมี
-
-ใช้ task ID ของ feature 002 และบันทึกผลแบบ mask ใต้
-`evidence/public-deployment/` ห้ามใช้ผลจาก LAN เป็นหลักฐาน external
-release ยัง blocked จนกว่าจะมี owner approval, management access, provider
-controls, origin validation, positive WireGuard traversal และหลักฐาน full-flow/
-mobility จากนอกเครือข่ายครบ
-
-## Verification
-
-- [x] Git baseline: push ไปยัง `R1KASAN/3D-Generate-by-AI-Local` แล้ว ผ่าน secret review — ดู [`evidence/setup/git-baseline.md`](../../evidence/setup/git-baseline.md)
-- [ ] เครื่องที่ใช้เป็น Windows + NVIDIA GPU (ไม่ใช่ macOS)
-- [ ] เครื่อง Windows clone baseline commit เดียวกันสำเร็จและ `git status --short` ว่าง
-- [ ] `evidence/windows/gpu-baseline.md` มี inventory จริง
-- [ ] `evidence/windows/runtime-compatibility.md` มี compatibility result จริง
-- [ ] `evidence/windows/shape-smoke.md` มี API-driven shape artifact จริง
-- [ ] `evidence/windows/object-info-check.md` มี manifest/node validation จริง
-- [ ] `docs/operations/windows-gpu-validation.md` มี checklist ครบ
-- [ ] `evidence/windows/phase-7-gate.md` มี PASS/FAIL/BLOCKED ที่อ้าง evidence ได้
-- [ ] `evidence/windows/comfy-adapter-smoke.md` มีผล adapter จริง
-- [ ] `evidence/windows/textured-glb-validation.md` มี GLB จริงที่ผ่าน validation ครบ
-- [ ] `evidence/windows/two-job-serial.md` พิสูจน์ isolation และ concurrency = 1
-- [ ] `evidence/windows/recovery-matrix.md` มี duplicate execution = 0
-- [ ] `evidence/windows/phase-9-gate.md` มี verdict ที่อ้าง evidence ได้
-- [ ] `evidence/lan/service-startup.md` และ `evidence/lan/reboot-recovery.md` ครบ
-- [ ] `evidence/lan/full-flow.md` มี flow ครบจากเครื่องที่สอง
-- [ ] `evidence/lan/isolation-and-ports.md` พิสูจน์ว่า 8000/8188 เข้าไม่ได้จาก LAN
-- [ ] `evidence/lan/phase-10-gate.md` มี verdict ที่อ้าง evidence ได้
-- [ ] `evidence/public-deployment/owner-gate.md` มีการอนุมัติทั้ง 6 ข้อจาก Owner เป็นลายลักษณ์อักษร
-- [ ] `evidence/public-deployment/firewall.md` ยืนยัน 3000/8000/8188/3389 blocked จากภายนอก
-- [ ] `deploy/cloudflare/dns-records.md` และ external evidence ของ feature-002 ยืนยัน proxied DNS record และไม่มีการเปิดเผย origin
-- [ ] `evidence/public-deployment/tls.md` ยืนยัน HTTPS ผ่านไม่มี certificate warning
-- [ ] `evidence/public-deployment/auth.md` ยืนยันไม่มี job token หรือ secret อื่นหลุดใน log
-- [ ] `evidence/public-deployment/ports.md` ยืนยัน internal port ทั้งหมดเชื่อมไม่ได้จากภายนอก
-- [ ] `evidence/public-deployment/full-flow.md` มี external user flow ที่ผ่านจริงผ่าน HTTPS
-- [ ] `evidence/public-deployment/negative-cases.md` ยืนยัน zero information leakage
-- [ ] `evidence/operations/runbook-drill.md` trace Job ID ได้ครบ lifecycle
-- [ ] `evidence/final/mvp-acceptance.md` map ทุก SC/FR ไปยัง evidence จริง
-- [ ] `evidence/final/constitution-audit.md` มี verdict PASS หรือ BLOCKED ที่ซื่อสัตย์
-
-## Troubleshooting
-
-| Symptom | Likely cause | Safe action |
-|---|---|---|
-| `nvidia-smi` ไม่ทำงาน | driver/GPU environment ไม่พร้อม | หยุด T058, เก็บ output, ให้ owner/administrator แก้ driver ก่อน |
-| `torch.cuda.is_available()` เป็น `False` | PyTorch/CUDA/driver mismatch | หยุด T060, บันทึก versions, ห้าม upgrade แบบสุ่ม |
-| `/object_info` ติดต่อไม่ได้ | ComfyUI ไม่ได้ run หรือ bind ผิด | ตรวจ process/local bind เท่านั้น; ห้ามเปิด firewall เพื่อแก้ |
-| Node class/hash ไม่ตรง manifest | custom node/runtime drift | หยุด T062, pin/review exact revision ก่อน retry |
-| Shape workflow ผ่านใน GUI แต่ API fail | API workflow export/mapping ไม่ถูกต้อง | export API format ใหม่และเก็บ evidence API เท่านั้น |
-| OOM หรือ native wheel import fail | VRAM หรือ runtime incompatibility | หยุดและรายงาน BLOCKED; ห้ามลด acceptance criterion เอง |
-| adapter test ผ่าน mock แต่ fail comfy | contract drift ระหว่าง adapter สองตัว | แก้ adapter ให้ตรง contract ห้ามแก้ contract ให้หลวม |
-| GLB ออกมามากกว่าหนึ่งไฟล์ | output resolver หรือ Job ID prefix ผิด | หยุด T075; ห้ามเลือก "ไฟล์ล่าสุด" เป็นทางแก้ |
-| GLB ไม่มี texture/UV | รัน shape workflow แทน shape+texture | ตรวจว่าใช้ workflow ที่ถูก ห้ามรับ shape-only เป็นผลผ่าน |
-| job ซ้ำหลัง restart | มี auto-resubmit อยู่ | หยุด T078; ต้อง reconcile ผ่าน `/history` ไม่ใช่ส่งใหม่ |
-| service ไม่ start หลัง reboot | dependency order หรือ service identity ผิด | แก้ service definition; ห้าม start ด้วยมือแล้วบอกว่าผ่าน |
-| เครื่อง LAN เข้า 8000/8188 ได้ | bind หรือ firewall rule ผิด | หยุด T083 ทันที เป็น security boundary |
-| owner-gate.md ยังมีข้อค้างไม่อนุมัติ | ยังไม่ได้ถาม Owner ครบ หรือ Owner ยังไม่ตอบ | หยุดที่ gate ของ feature-002; ห้ามเริ่ม live setup ก่อน T007, T008, T021 และ T055 ผ่านครบ |
-| Border firewall มหาวิทยาลัยไม่ยอมเปิด flow 443/51820 ที่จำเป็นไปยัง origin ที่อนุมัติ | นโยบาย IT ยังไม่อนุมัติ หรือคำขอชี้ไป address ผิด | หยุด T007 ของ feature-002; รายงาน Owner ห้ามใช้ address อื่นหรือพอร์ตอื่นแทนเด็ดขาด |
-| WireGuard tunnel ระหว่าง edge กับ laptop ต่อไม่ขึ้น | border firewall ยังไม่เปิด 51820/udp จริง, ลืมใส่ `PersistentKeepalive`, หรือมี VPN adapter อื่นแย่ง default route | ดู `docs/operations/tunnel-setup.md` หัวข้อ Troubleshooting — วินิจฉัยที่ชั้น tunnel เสมอ อย่าแก้โดย restart web service |
-| Certificate warning หรือ self-signed cert โผล่ | DNS ยังไม่ propagate หรือ domain ผิด | หยุด T025 ของ feature-002; ห้าม bypass warning ห้าม deploy ทั้งที่ยังมี warning |
-| Job token หรือ secret อื่นโผล่ใน log ที่ capture ไว้ | logging ไม่ mask ค่า sensitive | หยุด T014/T026 ของ feature-002 ทันที; ถือเป็นข้อมูลรั่วแล้ว ต้อง invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
-| Internal port เข้าได้จากภายนอกใน boundary validation ของ feature-002 | firewall rule ยังไม่ครอบคลุมพอ | หยุดทันที; ปิด service จนกว่าจะแก้ firewall เสร็จ |
-| **(feature 003)** ผู้เข้าชมเห็นหน้า error ของ Cloudflare เอง (เช่น หน้าแบบ 1033/502/530) แทนที่จะเป็นแอปพลิเคชัน | Approved origin ปิดเครื่องอยู่ หรือ `cloudflared` connector เชื่อมต่อ edge ไม่ได้ — นี่คือพฤติกรรมที่**คาดไว้และบันทึกไว้แล้ว** (FR-025a) ไม่ใช่ application bug | ตรวจสอบไฟฟ้า/เครือข่ายของ origin และสถานะของ connector เอง (`curl -sf http://127.0.0.1:20241/ready` บน origin ตาม `deploy/cloudflared/README.md`) **ก่อน**ไปแตะ GPU laptop หรือ application service ใด ๆ ถ้า origin ปกติดีแต่ยังเห็นหน้า error ของ provider แปลว่า DNS หรือ tunnel route ตั้งค่าผิด ไม่ใช่แอปพัง |
-| **(feature 003)** `/api/v1/health/ready` ตอบ `200` แต่เว็บไซต์แสดง generation failure แบบ `engine_unavailable` | `/ready` สะท้อนแค่ config ตอน startup และไม่เปลี่ยนอีกเลยหลังจากนั้น จึงตรวจจับ engine ที่ hang ระหว่างทำงานไม่ได้ | ตรวจ `/api/v1/health/engine` แทน เพราะมันทำการ probe จริงแบบ timeout สั้น ดู `specs/003-outbound-tunnel-entry/spec.md` FR-025 และ `apps/api/src/local3d/api/health.py` |
-| **(feature 003)** GPU laptop ให้บริการ LAN ไม่ได้หลัง reboot ตอน WireGuard ล่มอยู่ | ยังมีสมมติฐานเก่าค้างอยู่ว่า web service ต้องรอ tunnel ก่อนถึงจะ start ได้ | ภายใต้ feature 003 ต้องไม่เกิดเหตุการณ์นี้ — `scripts/windows/start_web_service.ps1` จะ start บน loopback โดยไม่มีเงื่อนไขเสมอ ถ้ายังเกิดอยู่ ให้ตรวจ `deploy/windows/services/web.xml` ว่าถอยกลับไปเป็นแบบ feature-002 (bind กับ tunnel address) หรือไม่ เทียบกับ `specs/003-outbound-tunnel-entry/contracts/compute-link.md` C4 |
-
-## Rollback
-
-- ก่อนเปลี่ยน runtime ให้บันทึก version/hash และ backup configuration ที่แก้
-- ถอน/ย้อนเฉพาะ component ที่ operator เพิ่งติดตั้งและมี documented rollback
-- ห้ามลบ models, evidence, database หรือ project storage เพื่อ "ลองใหม่"
-- ถ้า service ของ Phase 10 มีปัญหา ให้ stop service แล้วกลับไปรันแบบ manual เพื่อ debug ห้ามเปิด port เพิ่มเพื่อแก้
-- ถ้า Phase 11 มีปัญหาหลังเปิด public แล้ว ให้**ปิด/ลบ firewall rule ของ edge ก่อน** (ที่สร้างจาก `deploy/firewall/configure-public-edge.ps1`) แล้วค่อย debug — อย่าปล่อยให้ public เปิดอยู่ระหว่างแก้ปัญหา
-- หลัง rollback ให้รัน T058 inventory ซ้ำและบันทึกความเปลี่ยนแปลง
-
-## Escalation
-
-| Situation | Contact | Method |
-|---|---|---|
-| มีคนเสนอให้ใช้ macOS เป็น AI server | Project Owner | ปฏิเสธและอ้าง Hardware boundary ในเอกสารนี้ |
-| GitHub repository/visibility/access ไม่ชัดเจน | Project Owner | รายงาน `BLOCKED` พร้อม repository ที่ต้องยืนยัน |
-| GPU/driver/CUDA mismatch | Project Owner + Windows administrator | แนบ sanitized inventory และ requested version decision |
-| Manifest/node/license mismatch | Project Owner | แนบ manifest evidence; ห้ามเลือก revision เอง |
-| GLB ไม่ผ่าน validation ซ้ำหลายครั้ง | Project Owner | แนบ validation output; ห้ามลดเกณฑ์เอง |
-| LAN client เข้าถึง internal port ได้ | Project Owner | รายงานทันทีเป็น security issue |
-| Security/public exposure request ก่อน Phase 10 PASS | Project Owner | ปฏิเสธและอ้าง constitution/security boundary |
-| ยังไม่ยืนยันช่องทาง management (SSH/console) ของ edge server | Project Owner / IT มหาวิทยาลัย | แจ้งก่อนรัน `configure-public-edge.ps1` — สคริปต์เช็กก่อนทำเองอยู่แล้ว แต่ต้องตัดสินใจเลือกช่องทางก่อน (Stage 0.1 ของแผน deployment) |
-| ข้อมูลใน gate ของ feature-002 ข้อใดข้อหนึ่งตอบไม่ได้ | Project Owner | บันทึก `BLOCKED` ใน `owner-gate.md` โดยไม่แตะ public infra |
-| Job token หรือ secret อื่นรั่วระหว่าง validation ของ feature-002 | Project Owner | รายงานทันทีเป็น security incident แล้ว invalidate token ที่ได้รับผลกระทบ หรือ rotate secret นั้น |
-| Public exposure request ที่ยังไม่ผ่าน owner-gate | Project Owner | ปฏิเสธและอ้าง Constitution ข้อ IX + task ledger ของ feature-002 |
-
-## History
-
-| Date | Run By | Notes |
-|---|---|---|
-| 2026-09-03 | Not yet run | Runbook created from approved project artifacts; no Windows evidence claimed. |
-| 2026-09-03 | Owner (macOS) | v1.1 — Git baseline สร้างและ push ไปยัง `R1KASAN/3D-Generate-by-AI-Local` (public) หลังผ่าน secret review; Step 0 เปลี่ยนจาก "สร้าง baseline" เป็น "clone และตรวจ baseline"; เพิ่ม Scope boundary และ ComfyUI API integration rules |
-| 2026-09-03 | Owner (macOS) | v2.0 — เปลี่ยนชื่อไฟล์จาก `windows-phase7-operator-guide.*` เป็น `windows-ai-server-runbook.*`; ขยายขอบเขตจาก Phase 7 อย่างเดียวเป็น Phase 7–10 (จบที่ LAN ใช้งานได้); เพิ่ม Hardware boundary ห้ามใช้ macOS เป็น AI server; เพิ่มหัวข้อเตรียมเข้า Phase 11 ที่ขอเพียงโดเมน/DDNS, ชนิด IP และ router 80/443 โดยยังไม่ขอตัวเลข Public IP; ยังไม่มี Windows evidence ใด ๆ |
-| 2026-09-03 | Owner (macOS) | v3.0 — แก้ความเข้าใจผิดว่า Phase 10 ต้องการเครื่อง Owner โดยตรง (จริงๆ ใช้เครื่องอื่นของ operator เองก็พอ); ขยายขอบเขตจาก Phase 7–10 เป็น Phase 7–12 เต็มตาม spec เดิม ตาม Owner ตัดสินใจให้ดำเนินการต่อจนถึง public deployment; เพิ่ม Network boundary section อธิบายว่า Phase 11 เปิด port บน router ของ operator เอง ต้องได้ความยินยอมจาก operator ด้วย ไม่ใช่แค่ Owner สั่ง; เพิ่ม Step 22–34 ครอบคลุม T085–T097 เต็มรูปแบบ (owner-approval gate, Caddy, firewall, DNS/router, TLS, external auth test, port scan, external acceptance, negative-case security test, operator runbook drill, final acceptance matrix, constitution audit); เพิ่ม verification/troubleshooting/escalation ที่เกี่ยวกับ public deployment; ยังไม่มี Windows evidence ใด ๆ |
-| 2026-09-04 | Claude (public-deployment planning) | v4.0 — แทนที่โมเดล router-ของ-operator-เอง ด้วย topology ที่อนุมัติจริง: Public IP จากมหาวิทยาลัย (`161.200.90.4`) บน edge server แยกเครื่อง เชื่อมกับ GPU laptop ผ่าน WireGuard tunnel เพื่อให้ laptop ย้ายเครือข่ายได้ เขียนใหม่ Network boundary section, รายการ owner-gate ใน Step 22, Step 26 (T089 เปลี่ยนจาก router forwarding เป็นการยืนยัน border firewall), และรายการ checklist/troubleshooting/escalation ที่เกี่ยวข้อง แก้ constitution เป็น 1.1.0 ในการเปลี่ยนแปลงเดียวกันเพื่ออนุญาตนโยบายไม่มี site-wide login อย่างชัดเจน ดูเหตุผลเต็มที่ `C:\Users\MetaHosP\.claude\plans\router-ai-eventual-tide.md`; ยังไม่มี Windows evidence ใด ๆ |
+## การแก้ปัญหาและการ restart
+
+อ่านผล `health_chain.ps1 -Json` แล้วแก้เฉพาะ layer ที่เสีย ห้าม resubmit งาน
+ComfyUI ที่ไม่แน่ใจโดยอัตโนมัติ งานที่บันทึกแล้วต้องไม่ถูกแสดงว่าเสร็จสำเร็จ
+จนกว่าจะตรวจ output ใหม่ Logs บันทึกได้เฉพาะ request ID, safe job ID,
+transition, duration และ failure category ห้ามมี token, header, path ส่วนตัว,
+engine ID, URL ชั่วคราว หรือข้อมูลผู้ใช้
+
+การ reboot เป็นงานของ operator หลังเครื่องกลับมาต้องตรวจ service ทั้งสี่,
+listener แบบ loopback, GPU, storage/workflow, การกู้ job และ listener boundary
+ก่อนเริ่ม Quick Tunnel ใหม่ ห้ามถือว่าการ reboot ผ่านหากยังไม่ได้ reboot จริง
+
+Custom hostname ใช้ได้เมื่อได้รับอนุญาตโดเมนอย่างชัดเจนเท่านั้น การซื้อโดเมน,
+แก้ DNS และเพิ่ม server ไม่อยู่ในขอบเขตนี้

@@ -1,62 +1,15 @@
-# Local3D origin pass-through — Caddy (feature 003, outbound tunnel)
-#
-# Cloudflare Tunnel (cloudflared) is the only process that faces the
-# provider. It dials outbound and forwards matched requests to this Caddy
-# instance over loopback. Caddy itself has NO public listener: no :443, no
-# TLS, no client certificate requirement. There is no provider-to-origin
-# TLS hop for this process to authenticate anymore - cloudflared's outbound
-# connection owns that job. See deploy/cloudflared/ and
-# specs/003-outbound-tunnel-entry/contracts/origin-entry.md.
-#
-# Caddy's remaining job is a stateless, loopback-only streaming
-# pass-through to the GPU laptop over the private WireGuard binding:
-#   - stream request/response bodies, never buffer them (FR-014a) - the
-#     origin holds no upload, artifact, or job state
-#   - enforce an absurdity-guard body size limit during the stream
-#   - strip X-Job-Token/Cookie/Authorization from the access log
-#   - serve a maintenance page when the GPU laptop is unreachable
-#   - never store job responses in a shared cache
-#
-# Required environment (see .env.example):
-#   UPSTREAM_ORIGIN   - http://10.10.0.2:3000
-#   CADDY_LOG_PATH    - optional override for the access-log path
-#   CADDY_MAINTENANCE_ROOT - directory holding maintenance.html. MUST be set
-#                     on any origin where /srv/caddy/maintenance does not
-#                     exist, or FR-025's project-controlled unavailable page
-#                     silently degrades to a bare empty 504 (found live
-#                     2026-09-06). The origin OS is unverified, so this
-#                     cannot be hardcoded to either platform's layout.
-#
-# Policy invariants:
-#   - no site-wide login; job resources use per-job capability tokens
-#   - loopback-only listener; cloudflared is the only reachable caller
-#   - request and response bodies are never buffered to disk
 {
 	admin off
-
-	# The site-level `log` block below filters the ACCESS logger only, and it
-	# writes to a file. Caddy's error logger is a separate logger that writes
-	# to stderr through this default logger, and it serializes the entire
-	# request - headers included. Without the filter here, a single upstream
-	# error (a 504 from the engine health gate is enough) writes the caller's
-	# X-Job-Token to stderr in plaintext, which FR-017 and SC-009 forbid for
-	# every project-controlled log, not just the access log.
-	#
-	# Verified live on 2026-09-06 through a real public tunnel: before this
-	# block the token appeared 3 times in Caddy's stderr while the access log
-	# correctly held 0; after it, an identical induced 504 logged 0 times and
-	# the error entry kept its diagnostic fields.
 	log default {
 		output stderr
 		format filter {
-			wrap console
+			wrap json
 			fields {
-				request>headers>X-Job-Token delete
-				request>headers>Cookie delete
-				request>headers>Authorization delete
 				request>headers delete
+				request>headers>X-Job-Token delete
+				request>headers>Authorization delete
+				request>headers>Cookie delete
 				request>uri delete
-				request>host delete
 				request>remote_ip delete
 				request>client_ip delete
 				resp_headers delete
@@ -65,132 +18,58 @@
 	}
 }
 
-:8443 {
-	# Listen on loopback ONLY (FR-004) - cloudflared is the sole caller.
-	#
-	# The site address is deliberately ":8443" with a separate `bind`, not
-	# "http://127.0.0.1:8443". In Caddy a site address's host part is also a
-	# Host-header matcher: keying the block on 127.0.0.1 made every request
-	# the connector forwards - which carries the PUBLIC hostname in Host -
-	# fall through unmatched and return an empty 200. That failure is
-	# invisible locally (curl to 127.0.0.1 sends the matching Host) and
-	# would have surfaced only at production cutover. `bind` restricts the
-	# interface without constraining Host, so this stays loopback-only while
-	# accepting whatever hostname the active provider forwards - cloudflared
-	# today, the zrok fallback under FR-011e without a second fix.
+:8080 {
 	bind 127.0.0.1
 
-	# Security headers. The visitor's TLS terminates at the provider edge;
-	# these still apply to what this process itself returns.
 	header {
-		Strict-Transport-Security "max-age=31536000"
 		Cache-Control "no-store"
-		X-Request-ID {http.request.uuid}
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "DENY"
 		Referrer-Policy "no-referrer"
-		-Server
 	}
-	# Origin-generated correlation identifier: overwrite arbitrary client input.
-	# Only a validated resource ID is retained; raw URL/query/headers are omitted.
-	log_append <request_id {http.request.uuid}
-	@job path_regexp job ^/api/v1/jobs/([a-f0-9-]{36})(/(model|download))?$
-	log_append @job <job_id {re.job.1}
 
-	# Absurdity guard only, enforced during the stream (not after buffering
-	# the full body). The application enforces the authoritative 10 MiB
-	# upload policy.
 	request_body {
 		max_size 12MB
 	}
 
-	# Streams by default - no buffer_requests / buffer_responses directive
-	# is set here, and none may be added without violating FR-014a.
-	route {
-		# Check engine availability before relaying each request, using a GET
-		# clone so the upload body is not consumed. This is a health check only;
-		# it adds no login, credentials, or authentication dependency.
-		reverse_proxy {$UPSTREAM_ORIGIN} {
-			method GET
-			rewrite /api/v1/health/engine?
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy {$API_UPSTREAM} {
 			header_up X-Request-ID {http.request.uuid}
-			transport http {
-				dial_timeout 1s
-				response_header_timeout 2s
-			}
-			@ready status 2xx
-			handle_response @ready {
-				# Continue to the streaming handler with the original request.
-				vars origin_ready true
-			}
-			@unavailable status 3xx 4xx 5xx
-			handle_response @unavailable {
-				root * {$CADDY_MAINTENANCE_ROOT:/srv/caddy/maintenance}
-				rewrite * /maintenance.html
-				header Retry-After "30"
-				file_server {
-					status 503
-				}
-			}
-		}
-		reverse_proxy {$UPSTREAM_ORIGIN} {
-			header_up X-Request-ID {http.request.uuid}
-			fail_duration 10s
-			health_uri /
-			health_interval 15s
-			health_timeout 5s
-
+			header_down Cache-Control "no-store"
 			transport http {
 				dial_timeout 2s
-				response_header_timeout 2s
+				response_header_timeout 5s
 			}
-
-			# Job data and generated artifacts must never be stored in a
-			# shared cache (FR-030).
-			header_down Cache-Control "no-store"
 		}
 	}
 
-	# Expected mobility state: the laptop may be offline while the origin
-	# and provider entry remain healthy and serve this purpose-written
-	# notice, per FR-025 (no internal address, port, or stack detail).
+	handle {
+		reverse_proxy {$WEB_UPSTREAM} {
+			header_up X-Request-ID {http.request.uuid}
+			transport http {
+				dial_timeout 2s
+				response_header_timeout 5s
+			}
+		}
+	}
+
 	handle_errors {
-		header {
-			Cache-Control "no-store"
-			Strict-Transport-Security "max-age=31536000"
-			X-Content-Type-Options "nosniff"
-			X-Frame-Options "DENY"
-			Referrer-Policy "no-referrer"
-			X-Request-ID {http.request.uuid}
-			-Server
-		}
-		@upstreamDown expression {http.error.status_code} in [502, 503, 504]
-		handle @upstreamDown {
-			root * {$CADDY_MAINTENANCE_ROOT:/srv/caddy/maintenance}
-			rewrite * /maintenance.html
-			file_server
-			header Retry-After "30"
-		}
-		handle {
-			respond "{http.error.status_code} {http.error.status_text}" {http.error.status_code}
-		}
+		root * {$CADDY_MAINTENANCE_ROOT}
+		rewrite * /maintenance.html
+		file_server
 	}
 
-	# Explicitly remove arbitrary credential headers from access-log output.
 	log {
-		output file {$CADDY_LOG_PATH:-/var/log/caddy/local3d-access.log} {
-			roll_size 10MB
-			roll_keep 7
-		}
+		output file {$CADDY_LOG_PATH}
 		format filter {
 			wrap json
 			fields {
-				request>headers>X-Job-Token delete
-				request>headers>Cookie delete
-				request>headers>Authorization delete
 				request>headers delete
+				request>headers>X-Job-Token delete
+				request>headers>Authorization delete
+				request>headers>Cookie delete
 				request>uri delete
-				request>host delete
 				request>remote_ip delete
 				request>client_ip delete
 				resp_headers delete

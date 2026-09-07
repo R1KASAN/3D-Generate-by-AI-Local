@@ -28,6 +28,16 @@ async def live() -> dict[str, str]:
 async def ready(request: Request) -> JSONResponse:
     if getattr(request.app.state, "adapter_ready", True) is False:
         return JSONResponse(status_code=503, content=health_payload("unavailable"))
+    job_service = getattr(request.app.state, "job_service", None)
+    if job_service is None:
+        return JSONResponse(status_code=503, content=health_payload("unavailable"))
+    try:
+        storage_ready = job_service.storage.root.is_dir()
+        database_ready = job_service.database.path.parent.is_dir()
+    except (AttributeError, OSError):
+        storage_ready = database_ready = False
+    if not (storage_ready and database_ready):
+        return JSONResponse(status_code=503, content=health_payload("unavailable"))
     return JSONResponse(status_code=200, content=health_payload("ok"))
 
 

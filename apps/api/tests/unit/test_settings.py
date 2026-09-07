@@ -18,6 +18,25 @@ def test_defaults_lock_the_mvp_limits_and_retention_policy() -> None:
     assert settings.min_free_disk_percent == 10
     assert settings.storage_root == Path("storage")
     assert settings.database_path == Path("storage/jobs.sqlite3")
+    assert settings.job_timeout_seconds == 600
+    assert settings.worker_interval_seconds == 1
+    assert settings.maintenance_interval_seconds == 300
+    assert settings.orphan_grace_hours == 1
+
+
+def test_runtime_intervals_are_loaded_from_environment() -> None:
+    settings = load_settings(
+        {
+            "JOB_TIMEOUT_SECONDS": "120",
+            "WORKER_INTERVAL_SECONDS": "2",
+            "MAINTENANCE_INTERVAL_SECONDS": "60",
+            "ORPHAN_GRACE_HOURS": "2",
+        }
+    )
+    assert settings.job_timeout_seconds == 120
+    assert settings.worker_interval_seconds == 2
+    assert settings.maintenance_interval_seconds == 60
+    assert settings.orphan_grace_hours == 2
 
 
 @pytest.mark.parametrize("adapter", ["mock", "comfyui"])

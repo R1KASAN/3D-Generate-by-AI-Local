@@ -261,6 +261,12 @@ class JobRepository:
             rows = await cursor.fetchall()
         return [self._job_from_row(row) for row in rows]
 
+    async def list_job_ids(self) -> set[UUID]:
+        async with self.database.connection() as connection:
+            cursor = await connection.execute("SELECT id FROM generation_jobs")
+            rows = await cursor.fetchall()
+        return {UUID(row[0]) for row in rows}
+
     async def list_expired_terminal(self, now: datetime) -> list[UUID]:
         async with self.database.connection() as connection:
             cursor = await connection.execute(

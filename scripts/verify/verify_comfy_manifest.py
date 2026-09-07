@@ -40,8 +40,17 @@ def fetch_object_info(base_url: str, timeout: float) -> dict | None:
         return None
 
 
-def sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def sha256_json_file(path: Path) -> str:
+    """Hash JSON source with platform-independent newline bytes.
+
+    Git may materialize a tracked JSON file with CRLF on Windows even though
+    the manifest was pinned from its LF representation. Newlines are not
+    semantically meaningful to JSON, so normalize them before hashing while
+    leaving every other byte unchanged.
+    """
+
+    canonical = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
+    return hashlib.sha256(canonical).hexdigest()
 
 
 def main() -> int:
@@ -131,7 +140,7 @@ def main() -> int:
             if not path.is_file():
                 errors.append(f"workflow file missing for {prefix}{hash_field}: {path}")
                 continue
-            actual = sha256_file(path)
+            actual = sha256_json_file(path)
             if actual != expected:
                 errors.append(
                     f"{prefix}{hash_field} mismatch: manifest {expected}, file {actual}"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 import shutil
 from contextlib import suppress
 from datetime import datetime, timedelta, timezone
@@ -16,6 +15,7 @@ from ..domain.jobs import AssetKind, GenerationJob, JobAsset, JobState, SafeJobE
 from ..persistence.database import Database
 from ..persistence.jobs import JobRepository
 from ..storage.job_storage import JobStorage
+from ..observability.logging import configure_logging, log_job_event
 from .glb_publication import PublicationError, publish_glb
 from .generation_coordinator import GenerationCoordinator
 from .image_validation import ensure_disk_admission, validate_upload
@@ -23,7 +23,7 @@ from .job_tokens import create_job_token, verify_job_token
 from .serial_dispatcher import SerialDispatcher
 
 
-logger = logging.getLogger(__name__)
+logger = configure_logging(__name__)
 
 
 class JobNotFoundError(LookupError):
@@ -36,6 +36,10 @@ class ResultNotReadyError(RuntimeError):
 
 class ExpiredJobError(RuntimeError):
     """Terminal job is outside its retention window."""
+
+
+class JobNotCancellableError(RuntimeError):
+    """The authorized job has already left the waiting queue."""
 
 
 class JobService:
@@ -56,6 +60,7 @@ class JobService:
                 raise RuntimeError("ComfyUI generation adapter is not configured")
             adapter = MockGenerationAdapter(fixture_path=fixture)
         self.adapter: GenerationAdapter = adapter
+        self.workflow_revision = str(getattr(adapter, "workflow_revision", "mock-fixture-rev-1"))
         self.repository = JobRepository(self.database)
         self._jobs: dict[UUID, GenerationJob] = {}
         self._handles: dict[UUID, EngineHandle] = {}
@@ -63,6 +68,7 @@ class JobService:
         self.dispatcher = SerialDispatcher()
         self.coordinator = GenerationCoordinator()
         self._advance_lock = asyncio.Lock()
+        self._cleanup_lock = asyncio.Lock()
         self._worker_task: asyncio.Task[None] | None = None
 
     async def startup(self) -> None:
@@ -71,15 +77,21 @@ class JobService:
 
     async def cleanup_expired(self, now: datetime) -> list[UUID]:
         """Remove expired terminal job files before deleting their metadata."""
-        removed: list[UUID] = []
-        for job_id in await self.repository.list_expired_terminal(now):
-            self.storage.remove_job(job_id)
-            await self.repository.delete_job(job_id)
-            self._jobs.pop(job_id, None)
-            self._handles.pop(job_id, None)
-            self._requests.pop(job_id, None)
-            removed.append(job_id)
-        return removed
+        async with self._cleanup_lock:
+            removed: list[UUID] = []
+            for job_id in await self.repository.list_expired_terminal(now):
+                self.storage.remove_job(job_id)
+                await self.repository.delete_job(job_id)
+                self._jobs.pop(job_id, None)
+                self._handles.pop(job_id, None)
+                self._requests.pop(job_id, None)
+                removed.append(job_id)
+            known_ids = await self.repository.list_job_ids()
+            self.storage.remove_orphaned_jobs(
+                known_ids,
+                older_than=now - timedelta(hours=self.settings.orphan_grace_hours),
+            )
+            return removed
 
     def start_maintenance(self, *, interval_seconds: float = 300) -> asyncio.Task[None]:
         if interval_seconds <= 0:
@@ -167,7 +179,7 @@ class JobService:
             input_path=input_path,
             output_dir=paths.work_dir,
             workflow_revision=job.workflow_revision,
-            timeout_seconds=600,
+            timeout_seconds=self.settings.job_timeout_seconds,
             idempotency_key=str(job.job_id),
         )
         return self.dispatcher.enqueue(str(job.job_id))
@@ -208,7 +220,7 @@ class JobService:
         job = GenerationJob(
             job_id=job_id,
             token_digest=token_digest,
-            workflow_revision="mock-fixture-rev-1",
+            workflow_revision=self.workflow_revision,
             input_asset_id=input_asset.asset_id,
             created_at=now,
             queued_at=now,
@@ -228,12 +240,19 @@ class JobService:
             input_path=stored_path,
             output_dir=paths.work_dir,
             workflow_revision=job.workflow_revision,
-            timeout_seconds=600,
+            timeout_seconds=self.settings.job_timeout_seconds,
             idempotency_key=str(job_id),
         )
         self._requests[job_id] = request
         self.dispatcher.enqueue(str(job_id))
         self._jobs[job_id] = job
+        log_job_event(
+            logger,
+            job_id=job.job_id,
+            event_type="accepted",
+            safe_message="Job accepted",
+            details={"to_state": job.status.value},
+        )
         return job, token
 
     async def read_job(self, job_id: UUID, token: str | None) -> GenerationJob:
@@ -242,17 +261,60 @@ class JobService:
             raise JobNotFoundError
         if job.expires_at and job.expires_at <= datetime.now(timezone.utc):
             raise ExpiredJobError
-        await self._advance(job)
+        # Never wait for an engine/network call on the status request path.
+        # The worker owns progression; this best-effort kick only improves
+        # latency when a caller polls before the next scheduled tick.
+        if not job.is_terminal:
+            asyncio.create_task(self._advance(job))
+            # Yield a bounded scheduling slice so the worker can persist a
+            # cheap queued/processing transition without awaiting the engine.
+            await asyncio.sleep(0.05)
         return job
+
+    async def cancel_job(self, job_id: UUID, token: str | None) -> GenerationJob:
+        """Durably cancel one authorized job only while it is still waiting."""
+        async with self._advance_lock:
+            job = self._jobs.get(job_id) or await self.repository.get_job(job_id)
+            if job is None or not token or not verify_job_token(token, job.token_digest):
+                raise JobNotFoundError
+            if job.expires_at and job.expires_at <= datetime.now(timezone.utc):
+                raise ExpiredJobError
+            self._jobs[job.job_id] = job
+
+            # Cancellation is idempotent so a browser retry after a lost
+            # response cannot turn a successful cancellation into an error.
+            if job.status is JobState.CANCELLED:
+                return job
+            if (
+                job.status is not JobState.QUEUED
+                or job.attempt_count != 0
+                or self.dispatcher.active_job == str(job.job_id)
+            ):
+                raise JobNotCancellableError
+
+            events = await self.repository.list_events(job.job_id)
+            job._event_sequence = events[-1].sequence if events else 0
+            self.dispatcher.cancel_pending(str(job.job_id))
+            event = job.transition(
+                JobState.CANCELLED,
+                progress_message="Cancelled by user",
+                error=SafeJobError(code="cancelled_by_user", message="Cancelled by user"),
+            )
+            await self.repository.persist_transition(job, event)
+            self._requests.pop(job.job_id, None)
+            self._handles.pop(job.job_id, None)
+            self._log_transition(job, event)
+            return job
 
     async def read_result(self, job_id: UUID, token: str | None) -> Path:
         job = await self.read_job(job_id, token)
-        if job.status is not JobState.COMPLETED or job.output_asset_id is None:
-            raise ResultNotReadyError
-        path = self.storage.resolve_path(job_id, "outputs/model.glb")
-        if not path.is_file():
-            raise ResultNotReadyError
-        return path
+        async with self._cleanup_lock:
+            if job.status is not JobState.COMPLETED or job.output_asset_id is None:
+                raise ResultNotReadyError
+            path = self.storage.resolve_path(job_id, "outputs/model.glb")
+            if not path.is_file():
+                raise ResultNotReadyError
+            return path
 
     async def _advance(self, job: GenerationJob) -> None:
         async with self._advance_lock:
@@ -276,22 +338,23 @@ class JobService:
                     self._requests.pop(job.job_id, None)
                     return
                 job.attempt_count = 1
-                handle = self.adapter.submit(request)
+                handle = await asyncio.to_thread(self.adapter.submit, request)
                 job.engine_job_id = handle.internal_id
                 await self.repository.update_job(job)
                 self._handles[job.job_id] = handle
                 # Consume the adapter's initial queued observation at admission
                 # so the next client read has stable queued → processing
                 # semantics without executing GPU work twice.
-                self.adapter.inspect(handle)
+                await asyncio.to_thread(self.adapter.inspect, handle)
             except Exception:
                 error = SafeJobError(code="engine_unavailable", message="Generation unavailable")
                 event = job.transition(JobState.FAILED, error=error)
                 await self.repository.persist_transition(job, event)
+                self._log_transition(job, event)
                 self.dispatcher.complete(str(job.job_id))
                 self._requests.pop(job.job_id, None)
             return
-        observation = self.adapter.inspect(handle)
+        observation = await asyncio.to_thread(self.adapter.inspect, handle)
         decision = self.coordinator.decide(observation)
         if decision.target_state is JobState.QUEUED:
             return
@@ -310,6 +373,7 @@ class JobService:
                     progress_message=decision.progress_message,
                 )
             await self.repository.persist_transition(job, event)
+            self._log_transition(job, event)
         elif decision.target_state is JobState.COMPLETED:
             try:
                 output_path = publish_glb(
@@ -320,6 +384,7 @@ class JobService:
                 error = SafeJobError(code="invalid_result", message="Generated model is unavailable")
                 event = job.transition(JobState.FAILED, error=error)
                 await self.repository.persist_transition(job, event)
+                self._log_transition(job, event)
                 self.dispatcher.complete(str(job.job_id))
                 self._handles.pop(job.job_id, None)
                 self._requests.pop(job.job_id, None)
@@ -342,20 +407,48 @@ class JobService:
             if job.status is JobState.QUEUED:
                 processing_event = job.transition(JobState.PROCESSING)
                 await self.repository.persist_transition(job, processing_event)
+                self._log_transition(job, processing_event)
             event = job.transition(JobState.COMPLETED, output_asset_id=output_asset.asset_id, progress_percent=100)
             await self.repository.persist_transition(job, event, asset=output_asset)
+            self._log_transition(job, event)
             self.dispatcher.complete(str(job.job_id))
             self._handles.pop(job.job_id, None)
             self._requests.pop(job.job_id, None)
         else:
             event = job.transition(decision.target_state, error=decision.error)
             await self.repository.persist_transition(job, event)
+            self._log_transition(job, event)
             self.dispatcher.complete(str(job.job_id))
             self._handles.pop(job.job_id, None)
             self._requests.pop(job.job_id, None)
 
     def queue_position(self, job_id: UUID) -> int | None:
         return self.dispatcher.position(str(job_id))
+
+    def result_available(self, job: GenerationJob) -> bool:
+        if job.status is not JobState.COMPLETED or job.output_asset_id is None:
+            return False
+        return self.storage.resolve_path(job.job_id, "outputs/model.glb").is_file()
+
+    @staticmethod
+    def _log_transition(job: GenerationJob, event: object) -> None:
+        from_status = getattr(event, "from_status", None)
+        to_status = getattr(event, "to_status", None)
+        duration_ms = None
+        if job.finished_at is not None:
+            duration_ms = max(0, int((job.finished_at - job.created_at).total_seconds() * 1000))
+        log_job_event(
+            logger,
+            job_id=job.job_id,
+            event_type=str(getattr(event, "event_type", "state_changed")),
+            safe_message=str(getattr(event, "safe_message", None) or "Job state updated"),
+            details={
+                "from_state": getattr(from_status, "value", from_status),
+                "to_state": getattr(to_status, "value", to_status),
+                "duration_ms": duration_ms,
+                "failure_category": job.error_code,
+            },
+        )
 
 def _sha256(path: Path) -> str:
     import hashlib

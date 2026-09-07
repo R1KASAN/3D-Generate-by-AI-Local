@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import { Job, JobStatus } from "../../lib/api/jobs";
@@ -33,7 +33,7 @@ describe("useJobStatus", () => {
     vi.useFakeTimers();
     const fetchStatus = vi
       .fn<(id: string, token: string) => Promise<Job>>()
-      .mockResolvedValueOnce(job("processing", 25))
+      .mockResolvedValueOnce(job("running", 25))
       .mockResolvedValueOnce(job("completed", 100));
 
     render(<Harness fetchStatus={fetchStatus} />);
@@ -41,7 +41,7 @@ describe("useJobStatus", () => {
       await Promise.resolve();
     });
     expect(fetchStatus).toHaveBeenCalledTimes(1);
-    expect(fetchStatus).toHaveBeenCalledWith("job-1", "secret-token");
+    expect(fetchStatus).toHaveBeenCalledWith("job-1", "secret-token", expect.any(AbortSignal));
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1_999);
     });
@@ -74,11 +74,45 @@ describe("useJobStatus", () => {
   it("renders approximate queue/progress and terminal recovery text", () => {
     render(
       <JobStatusView
-        job={{ ...baseJob, status: "processing", progress_percent: null, progress_message: null }}
+        job={{ ...baseJob, status: "running", progress_percent: null, progress_message: null }}
       />,
     );
-    expect(screen.getByText(/processing/i)).toBeInTheDocument();
+    expect(screen.getByText(/running/i)).toBeInTheDocument();
     expect(screen.getByText(/progress unavailable/i)).toBeInTheDocument();
     expect(screen.getByText(/queue position unavailable/i)).toBeInTheDocument();
+  });
+
+  it("retries after a transient 503 and clears the error when polling recovers", async () => {
+    cleanup();
+    vi.useFakeTimers();
+    const fetchStatus = vi
+      .fn<(id: string, token: string, signal?: AbortSignal) => Promise<Job>>()
+      .mockRejectedValueOnce(new Error("edge returned HTML"))
+      .mockResolvedValueOnce(job("completed", 100));
+    render(<Harness fetchStatus={fetchStatus} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/edge returned HTML/i)).toBeInTheDocument();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000);
+    });
+    expect(screen.getAllByText("completed:100").length).toBeGreaterThan(0);
+    vi.useRealTimers();
+  });
+
+  it("does not report a cancellation as a completed result", async () => {
+    cleanup();
+    vi.useFakeTimers();
+    const fetchStatus = vi.fn<(id: string, token: string, signal?: AbortSignal) => Promise<Job>>(
+      () => Promise.reject(new DOMException("aborted", "AbortError")),
+    );
+    render(<Harness fetchStatus={fetchStatus} />);
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(screen.getByText(/status unavailable|aborted/i)).toBeInTheDocument();
+    expect(screen.queryByText(/completed/)).not.toBeInTheDocument();
+    vi.useRealTimers();
   });
 });

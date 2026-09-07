@@ -9,7 +9,9 @@ import aiosqlite
 
 
 SCHEMA_PATH = Path(__file__).with_name("schema.sql")
-MIN_SAFE_WAL_VERSION = (3, 22, 0)
+# SQLite WAL reset corruption was fixed in 3.51.3 (and the documented
+# backports). Older runtimes use rollback journaling for fail-safe recovery.
+MIN_SAFE_WAL_VERSION = (3, 51, 3)
 
 
 class Database:
@@ -26,6 +28,10 @@ class Database:
         self.busy_timeout_ms = busy_timeout_ms
         self.sqlite_version = sqlite_version or tuple(sqlite3.sqlite_version_info)
 
+    @property
+    def journal_mode(self) -> str:
+        return "WAL" if self.sqlite_version >= MIN_SAFE_WAL_VERSION else "DELETE"
+
     async def initialize(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         async with self.connection() as connection:
@@ -40,8 +46,7 @@ class Database:
         try:
             await connection.execute("PRAGMA foreign_keys = ON")
             await connection.execute(f"PRAGMA busy_timeout = {self.busy_timeout_ms}")
-            journal_mode = "WAL" if self.sqlite_version >= MIN_SAFE_WAL_VERSION else "DELETE"
-            await connection.execute(f"PRAGMA journal_mode = {journal_mode}")
+            await connection.execute(f"PRAGMA journal_mode = {self.journal_mode}")
             yield connection
         except Exception:
             await connection.rollback()

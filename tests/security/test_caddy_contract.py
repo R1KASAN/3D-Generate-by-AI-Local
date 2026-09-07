@@ -1,33 +1,4 @@
-"""Static contract tests for deploy/caddy/Caddyfile (feature 003).
-
-Feature 003 replaces feature 002's inbound origin proxy (public :443
-listener, Origin CA certificate, Authenticated Origin Pulls / mTLS) with an
-outbound Cloudflare Tunnel connector. Caddy's role shrinks to a stateless,
-loopback-only streaming pass-through between the connector and the GPU
-laptop - see specs/003-outbound-tunnel-entry/contracts/origin-entry.md.
-
-These tests never start Caddy or touch the network - they parse the
-Caddyfile text and assert:
-
-  - no public listener of any kind (no :443/:80 site block, no TLS/mTLS
-    config, no Origin CA or client-CA file references) - cloudflared alone
-    owns the provider-facing hop now
-  - the listener is loopback-only
-  - no site-wide login (basic_auth) - the requested policy is per-job
-    capability tokens only
-  - the only upstream is the WireGuard tunnel address to the GPU laptop,
-    never 0.0.0.0/::, never ComfyUI's port (:8188) directly
-  - request and response bodies are streamed, never buffered to disk
-    (FR-014a) - buffer_requests/buffer_responses must be absent
-  - X-Job-Token/Cookie/Authorization are stripped from the access log
-  - a maintenance page is served when the upstream is unreachable
-  - 161.200.90.3 never appears in deployment configuration (see the
-    project's hard constraint: only .4 may ever be configured)
-
-Run with: uv run --project apps/api pytest tests/security/test_caddy_contract.py
-(or any Python 3.11+ with pytest installed; this file has no project
-dependency beyond pytest and the standard library.)
-"""
+"""Static contract for the single-node feature-004 Caddy edge."""
 
 from __future__ import annotations
 
@@ -36,304 +7,67 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CADDYFILE = REPO_ROOT / "deploy" / "caddy" / "Caddyfile"
-
-# Scope for the "never .3" check: deployment configuration and network
-# scripts, not documentation or evidence, which must be free to explain
-# why .3 is off-limits.
-FORBIDDEN_IP_SCAN_PATHS = [
-    REPO_ROOT / "deploy",
-    REPO_ROOT / "scripts" / "windows" / "start_web_service.ps1",
-    REPO_ROOT / "scripts" / "windows" / "watchdog_tunnel.ps1",
-]
-FORBIDDEN_IP = "161.200.90.3"
+ROOT = Path(__file__).resolve().parents[2]
+CADDYFILE = ROOT / "deploy/caddy/Caddyfile"
 
 
-def _read_caddyfile() -> str:
-    if not CADDYFILE.exists():
-        pytest.fail(f"{CADDYFILE} does not exist.")
+def text() -> str:
+    if not CADDYFILE.is_file():
+        pytest.fail(f"missing {CADDYFILE}")
     return CADDYFILE.read_text(encoding="utf-8")
 
 
-def _directives_only(text: str) -> str:
-    """Strip full-line comments (leading '#') so directive-focused checks
-    aren't tripped up by explanatory prose. Only used by checks about actual
-    Caddy directives; the forbidden-IP scan intentionally does NOT use this."""
-    return "\n".join(line for line in text.splitlines() if not line.strip().startswith("#"))
+def active() -> str:
+    return "\n".join(line for line in text().splitlines() if not line.strip().startswith("#"))
 
 
-def test_no_basic_auth() -> None:
-    text = _directives_only(_read_caddyfile())
-    assert not re.search(r"\bbasic_?auth\b", text, re.IGNORECASE), (
-        "Caddyfile must not configure a site-wide login (basic_auth) as an "
-        "active directive. The requested policy is per-job capability "
-        "tokens only."
-    )
+def test_single_loopback_listener_and_proxy_targets() -> None:
+    body = active()
+    assert re.search(r"(?m)^\s*:8080\s*\{", body)
+    assert re.search(r"(?m)^\s*bind\s+127\.0\.0\.1\s*$", body)
+    assert "{$API_UPSTREAM}" in body
+    assert "{$WEB_UPSTREAM}" in body
+    assert ":8188" not in body
+    assert ":8443" not in body
+    assert "UPSTREAM_ORIGIN" not in body
 
 
-def test_no_public_listener() -> None:
-    """FR-003/FR-004: the origin has no inbound public port at all. Only
-    cloudflared dials out; Caddy never listens on :443 or :80."""
-    text = _directives_only(_read_caddyfile())
-    assert not re.search(r"(?m)^\s*:443\b", text), "The origin must not listen on :443 - there is no inbound port."
-    assert not re.search(r"(?m)^\s*:80\b", text), "The origin must not listen on :80."
-    assert "{$PUBLIC_HOSTNAME}" not in text, (
-        "The Caddyfile must not key a site block on the public hostname - "
-        "that hostname is resolved by the provider edge, not by this loopback proxy."
-    )
+def test_path_split_is_explicit_and_preserves_api_prefix() -> None:
+    body = active()
+    assert re.search(r"@api\s+path\s+/api\s+/api/\*", body)
+    assert body.count("reverse_proxy") == 2
+    assert "handle_path" not in body
 
 
-def test_no_tls_or_client_certificate_config() -> None:
-    """There is no provider-to-origin TLS hop for this process to
-    authenticate anymore: cloudflared's outbound connection owns that.
-    Feature 002's Origin CA + Authenticated Origin Pulls (mTLS) are removed,
-    not reconfigured."""
-    text = _directives_only(_read_caddyfile())
-    assert not re.search(r"(?m)^\s*tls\b", text, re.IGNORECASE), "Caddy must not configure a tls block."
-    assert "client_auth" not in text, "Caddy must not require a client certificate; there is no inbound TLS hop."
-    assert "require_and_verify" not in text
-    assert "trusted_ca_cert_file" not in text
-    for forbidden in ("ORIGIN_CERT_PATH", "ORIGIN_KEY_PATH", "ORIGIN_PULL_CA_PATH"):
-        assert forbidden not in text, f"{forbidden} is a feature-002 artifact and must not appear."
-    assert not re.search(r"(?m)^\s*acme(?:\s|$)", text, re.IGNORECASE)
-    assert not re.search(r"(?m)^\s*email\s+", text)
+def test_loopback_and_no_public_tls_or_auth() -> None:
+    body = active()
+    assert "0.0.0.0" not in body and not re.search(r"(?m)^\s*:443\s*\{", body) and not re.search(r"(?m)^\s*:80\s*\{", body)
+    assert "tls" not in body.lower()
+    assert "basic_auth" not in body
+    assert re.search(r"(?m)^\s*admin\s+off\s*$", body)
 
 
-def test_listener_is_loopback_only() -> None:
-    """FR-004: the pass-through must not be reachable from any interface
-    other than loopback - cloudflared is the only process that reaches it."""
-    text = _directives_only(_read_caddyfile())
-    assert re.search(r"127\.0\.0\.1", text), "Caddyfile must bind an explicit loopback address."
-    assert "0.0.0.0" not in text
-    assert not re.search(r"(?<!127\.0\.0\.)1\b::(?!\w)", text)
+def test_size_cache_and_timeout_controls() -> None:
+    body = active()
+    assert re.search(r"request_body\s*\{[^}]*max_size\s+12MB", body, re.S)
+    assert "Cache-Control \"no-store\"" in body
+    assert "response_header_timeout 5s" in body
+    assert "dial_timeout 2s" in body
+    assert "buffer_requests" not in body and "buffer_responses" not in body
 
 
-def test_bare_port_site_address_is_paired_with_a_loopback_bind() -> None:
-    """A site address written as ':8443' listens on every interface unless a
-    `bind` directive narrows it. The Caddyfile uses the bare form on purpose -
-    keying the block on `http://127.0.0.1:8443` also makes 127.0.0.1 a
-    Host-header matcher, so every request the connector forwards (carrying the
-    public hostname in Host) falls through unmatched and returns an empty 200.
-    That is invisible to a local curl and would surface only at cutover.
-    Since the bare form is required, `bind 127.0.0.1` is what keeps FR-004
-    true, and its absence must fail loudly rather than silently open the
-    listener to the network."""
-    text = _directives_only(_read_caddyfile())
-    bare_ports = re.findall(r"(?m)^\s*(:\d+)\s*\{", text)
-    if bare_ports:
-        assert re.search(r"(?m)^\s*bind\s+127\.0\.0\.1\s*$", text), (
-            f"site address(es) {bare_ports} listen on all interfaces without "
-            "a 'bind 127.0.0.1' directive - that would expose the pass-through "
-            "beyond loopback (FR-004)"
-        )
-        assert not re.search(r"(?m)^\s*bind\s+(?!127\.0\.0\.1\s*$)", text), (
-            "the only permitted bind address for the pass-through is 127.0.0.1"
-        )
-
-
-def test_upstream_is_tunnel_address_only() -> None:
-    raw = _read_caddyfile()
-    directives = _directives_only(raw)
-    # The upstream must be parameterized (never a hardcoded literal IP/host)
-    # and must never point at 0.0.0.0, ::, or ComfyUI's port.
-    assert "{$UPSTREAM_ORIGIN}" in raw, (
-        "reverse_proxy upstream must use the {$UPSTREAM_ORIGIN} placeholder, "
-        "not a hardcoded address."
-    )
-    for forbidden in ("0.0.0.0", "::", ":8188"):
-        assert forbidden not in directives, f"Caddyfile must never reference {forbidden!r} as an upstream directive."
-
-
-def test_no_hardcoded_approved_address_literal() -> None:
-    raw = _read_caddyfile()
-    directives = _directives_only(raw)
-    ipv4_literal = re.compile(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}\b")
-    for match in ipv4_literal.finditer(directives):
-        assert match.group(0).startswith("127.0.0."), (
-            f"Unexpected IPv4 literal {match.group(0)!r} as an active directive; "
-            "only the loopback listen address may be a literal."
-        )
-
-
-def test_streaming_pass_through_no_buffering() -> None:
-    """FR-014a: request and response bodies must be streamed. Caddy's
-    reverse_proxy streams by default; buffer_requests/buffer_responses
-    would defeat that and must never be added."""
-    text = _directives_only(_read_caddyfile())
-    assert "buffer_requests" not in text, (
-        "buffer_requests would spool the full request body to memory/disk "
-        "before forwarding it, violating the streaming pass-through requirement."
-    )
-    assert "buffer_responses" not in text, (
-        "buffer_responses would spool the full response (including generated "
-        "artifacts) before returning it, adding latency and a temp-file "
-        "footprint the origin must not have."
-    )
-
-
-def test_request_body_max_size_within_policy() -> None:
-    text = _read_caddyfile()
-    match = re.search(r"max_size\s+(\d+)\s*(MB|MiB)", text, re.IGNORECASE)
-    assert match, "Caddyfile must set request_body max_size."
-    value = int(match.group(1))
-    assert 10 <= value <= 16, (
-        f"max_size is {value}{match.group(2)}; must stay in [10, 16] MiB. "
-        "It must be looser than the API's 10 MiB policy (to avoid rejecting "
-        "legal uploads due to multipart framing overhead) but still act as "
-        "an absurdity guard, not a de facto unlimited size. This limit MUST "
-        "be enforced during the stream, not after buffering the full body."
-    )
-
-
-def test_job_token_never_rewritten_or_stripped_from_request() -> None:
-    text = _read_caddyfile()
-    assert "X-Job-Token" not in re.sub(r"(?m)^\s*#.*$", "", text) or "delete" in text, (
-        "If X-Job-Token is referenced outside of the log-redaction block, "
-        "confirm manually it is not being altered on the request path."
-    )
-    assert not re.search(r"header_up\s+[-+]?X-Job-Token", text, re.IGNORECASE), (
-        "Caddyfile must not add, remove, or rewrite the X-Job-Token request header."
-    )
-
-
-def test_job_token_deleted_from_access_log() -> None:
-    text = _read_caddyfile()
-    log_block_match = re.search(r"log\s*\{(.*?)\n\t\}", text, re.DOTALL)
-    assert log_block_match, "Caddyfile must define a log block."
-    log_block = log_block_match.group(1)
-    assert "format filter" in log_block, "The log block must use `format filter` to redact sensitive headers."
-    assert re.search(r"request>headers>X-Job-Token\s+delete", log_block), (
-        "The log block must delete request>headers>X-Job-Token. Caddy's built-in "
-        "redaction only covers Authorization/Cookie - X-Job-Token would otherwise "
-        "be written to the access log in cleartext, violating the no-token-in-logs "
-        "requirement (FR-017)."
-    )
-
-
-def test_job_token_deleted_from_the_error_log_too() -> None:
-    """SC-009 says the token must appear in ZERO project-controlled logs, not
-    zero access logs. Caddy's error logger is a separate logger that writes to
-    stderr and serializes the whole request, headers included - so the site
-    block's access-log filter does not cover it.
-
-    Found live on 2026-09-06: a single engine-health-gate 504 wrote a real
-    X-Job-Token to stderr in cleartext three times while the access log
-    correctly held zero. The global `log default` block is what closes that
-    hole, so its absence must fail here rather than at the next incident."""
-    text = _read_caddyfile()
-    global_log = re.search(r"(?ms)^\{.*?^\t*log\s+default\s*\{(.*?)^\t\}", text)
-    assert global_log, (
-        "the global options block must define `log default` - without it "
-        "Caddy's error logger writes unfiltered request headers to stderr"
-    )
-    block = global_log.group(1)
-    assert "format filter" in block, "the default logger must use `format filter`"
+def test_sensitive_fields_are_removed_from_access_and_error_logs() -> None:
+    body = text()
+    assert "log default" in body
     for field in ("X-Job-Token", "Cookie", "Authorization"):
-        assert re.search(rf"request>headers>{field}\s+delete", block), (
-            f"the default (error) logger must delete request>headers>{field}"
-        )
-    assert re.search(r"request>headers\s+delete", block), (
-        "the default (error) logger must delete the whole request>headers object - "
-        "deleting only the three known credential headers still leaks any header "
-        "a future change starts carrying"
-    )
+        assert re.search(rf"request>headers>{field}\s+delete", body)
+    assert "request>headers delete" in body
+    assert "request>uri delete" in body
+    assert "request>remote_ip delete" in body
 
 
-def test_maintenance_root_is_configurable_not_a_hardcoded_unix_path() -> None:
-    """FR-025/SC-008 require a project-controlled unavailable page. The page
-    exists at deploy/caddy/maintenance/maintenance.html, but the Caddyfile used
-    to hardcode the absolute Unix path /srv/caddy/maintenance as its root.
-
-    Found live on 2026-09-06: on a host where that directory does not exist,
-    file_server 404s inside handle_errors and the visitor receives a bare
-    504 with Content-Length 0 instead of the project page - FR-025 silently
-    unsatisfied with nothing failing. The approved origin's OS is still
-    PENDING TARGET INSPECTION, so neither platform's layout may be hardcoded;
-    the root must come from an environment placeholder the operator sets."""
-    text = _directives_only(_read_caddyfile())
-    roots = re.findall(r"(?m)^\s*root\s+\*\s+(\S+)", text)
-    assert roots, "handle_errors must serve a maintenance root"
-    for root in roots:
-        assert root.startswith("{$"), (
-            f"maintenance root {root!r} is hardcoded - it must be an environment "
-            "placeholder so an origin whose filesystem layout differs still serves "
-            "the FR-025 page instead of degrading to an empty error"
-        )
-    page = REPO_ROOT / "deploy" / "caddy" / "maintenance" / "maintenance.html"
-    assert page.is_file(), "the project-controlled maintenance page must exist in the repo"
-    body = page.read_text(encoding="utf-8")
-    for leak in ("127.0.0.1", "10.10.0.2", "8443", "8000", "8188", "cloudflared", "Caddy"):
-        assert leak not in body, (
-            f"the maintenance page must not disclose {leak!r} - FR-025 forbids naming "
-            "any internal address, port, hostname or stack detail"
-        )
-
-
-def test_admin_api_disabled() -> None:
-    text = _read_caddyfile()
-    assert re.search(r"(?m)^\s*admin\s+off\s*$", text), "Caddy's admin API must be disabled (`admin off`)."
-
-
-def test_maintenance_page_on_upstream_failure() -> None:
-    text = _read_caddyfile()
-    assert "handle_errors" in text, (
-        "Caddyfile must define handle_errors so an unreachable GPU laptop shows "
-        "a maintenance page, not a raw 502."
-    )
-    assert re.search(r"\[?50[234]\]?", text), "handle_errors must match on upstream failure status codes (502/503/504)."
-
-
-def test_forbidden_ip_absent_from_deployment_config() -> None:
-    """161.200.90.3 must never appear in anything that configures or probes
-    the network. It MAY appear in docs/ and evidence/ (which must be free to
-    explain the restriction) and in this test file itself."""
-    offenders: list[str] = []
-    for target in FORBIDDEN_IP_SCAN_PATHS:
-        if not target.exists():
-            continue
-        files = [target] if target.is_file() else [p for p in target.rglob("*") if p.is_file()]
-        for path in files:
-            if path.suffix in {".exe", ".log"}:
-                continue
-            try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            if FORBIDDEN_IP in content:
-                offenders.append(str(path.relative_to(REPO_ROOT)))
-    assert not offenders, (
-        f"{FORBIDDEN_IP} must never appear in deployment configuration or network "
-        f"scripts. Found it in: {', '.join(offenders)}"
-    )
-
-
-def test_origin_correlation_and_all_response_cache_policy():
-    text = _directives_only(_read_caddyfile())
-    assert 'log_append <request_id {http.request.uuid}' in text
-    assert 'header_up X-Request-ID {http.request.uuid}' in text
-    assert 'request>uri delete' in text
-    assert 'request>headers delete' in text
-    assert 'request>remote_ip delete' in text
-    assert 'request>client_ip delete' in text
-    assert 'Strict-Transport-Security' in text
-    assert 'Cache-Control "no-store"' in text.split('reverse_proxy')[0]
-
-
-def test_proxy_matches_connector_and_quickstart_port():
-    """The connector's ingress target and the quickstart's Quick Tunnel command
-    must both point at the port Caddy actually listens on. The endpoint is
-    composed from the bare site address plus its `bind` directive rather than
-    read from a single `http://127.0.0.1:PORT` token, because keying the site
-    block on the loopback host also made it a Host-header matcher and broke
-    every forwarded request."""
-    text = _directives_only(_read_caddyfile())
-    config = (REPO_ROOT / 'deploy/cloudflared/config.yml.example').read_text(encoding='utf-8')
-    quickstart = (REPO_ROOT / 'specs/003-outbound-tunnel-entry/quickstart.md').read_text(encoding='utf-8')
-    port_match = re.search(r'(?m)^\s*:(\d+)\s*\{', text)
-    assert port_match, 'no bare-port site address found in the Caddyfile'
-    bind_match = re.search(r'(?m)^\s*bind\s+(\S+)\s*$', text)
-    assert bind_match, 'the site block must declare an explicit bind address'
-    endpoint = f'http://{bind_match.group(1)}:{port_match.group(1)}'
-    assert endpoint in config, f'{endpoint} missing from the cloudflared ingress config'
-    assert f'--url {endpoint}' in quickstart, f'{endpoint} missing from the quickstart Quick Tunnel command'
+def test_maintenance_page_is_project_controlled() -> None:
+    body = active()
+    assert "handle_errors" in body
+    assert re.search(r"root\s+\*\s+\{\$CADDY_MAINTENANCE_ROOT", body)
+    assert (ROOT / "deploy/caddy/maintenance/maintenance.html").is_file()

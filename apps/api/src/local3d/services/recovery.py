@@ -22,6 +22,19 @@ class RecoveryService:
                     reconciled.append(str(job.job_id))
                 continue
             if job.status is JobState.PROCESSING and job.job_id not in self.job_service._handles:
+                if job.engine_job_id:
+                    events = await self.job_service.repository.list_events(job.job_id)
+                    sequence = events[-1].sequence + 1 if events else 1
+                    await self.job_service.repository.append_event(
+                        JobEvent(
+                            job_id=job.job_id,
+                            sequence=sequence,
+                            event_type="orphan_engine_work",
+                            from_status=JobState.PROCESSING,
+                            to_status=JobState.PROCESSING,
+                            safe_message="Possible in-flight engine work requires operator review",
+                        )
+                    )
                 await self._mark_restart_failure(job)
                 reconciled.append(str(job.job_id))
         for job in await self.job_service.repository.list_completed():

@@ -1,3 +1,10 @@
+# HISTORICAL — do not execute for feature 004
+
+Feature 004 has no edge server, WireGuard, inbound origin, DNS record, or
+custom hostname. Use [single-host-tunnel-setup.md](single-host-tunnel-setup.md)
+for the temporary test path; any custom-hostname work requires a separately
+approved future requirement.
+
 # Runbook: Feature 003 production cutover
 
 **Owner:** Responsible human operator | **Frequency:** Initial cutover or provider/network change

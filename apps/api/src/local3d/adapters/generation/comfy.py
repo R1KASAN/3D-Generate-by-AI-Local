@@ -34,12 +34,16 @@ class ComfyGenerationAdapter:
         mapper: WorkflowMapper,
         resolver: OutputResolver,
         output_prefix_pattern: str = "jobs/{job_id}/model",
+        workflow_revision: str = "unknown",
     ) -> None:
         self._client = client
         self._mapper = mapper
         self._resolver = resolver
         self._output_prefix_pattern = output_prefix_pattern
+        self.workflow_revision = workflow_revision
         self._submitted_at: dict[str, tuple[datetime, float, UUID]] = {}
+        self._close_lock = threading.Lock()
+        self._closed = False
         self._loop = asyncio.new_event_loop()
         self._thread = threading.Thread(
             target=self._loop.run_forever, name="comfy-adapter-loop", daemon=True
@@ -47,6 +51,11 @@ class ComfyGenerationAdapter:
         self._thread.start()
 
     def close(self) -> None:
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+
         async def _shutdown() -> None:
             await self._client.aclose()
 

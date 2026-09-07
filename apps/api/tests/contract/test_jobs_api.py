@@ -7,6 +7,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from local3d.main import create_app
+from local3d.config import Settings
 
 
 FIXTURE = Path(__file__).parents[4] / "fixtures/inputs/valid-reference.png"
@@ -17,6 +18,7 @@ def test_runtime_routes_match_the_public_openapi_contract() -> None:
     expected = {
         "/api/v1/jobs",
         "/api/v1/jobs/{job_id}",
+        "/api/v1/jobs/{job_id}/cancel",
         "/api/v1/jobs/{job_id}/model",
         "/api/v1/jobs/{job_id}/download",
         "/api/v1/health/live",
@@ -62,3 +64,22 @@ def test_job_resources_require_the_header_token_and_return_glb_content() -> None
     assert status.json() == missing.json() == unknown.json()
     assert model.status_code in {404, 409}
     assert download.status_code in {404, 409}
+
+
+def test_unavailable_adapter_returns_safe_retryable_no_store_error(tmp_path: Path) -> None:
+    settings = Settings(
+        generation_adapter="comfyui",
+        workflow_manifest_path=tmp_path / "missing-manifest.json",
+        comfyui_output_root=tmp_path / "comfy-output",
+    )
+    with TestClient(create_app(settings)) as client:
+        response = client.post(
+            "/api/v1/jobs",
+            files={"file": ("reference.png", FIXTURE.read_bytes(), "image/png")},
+        )
+    assert response.status_code == 503
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["retry-after"] == "10"
+    assert response.json() == {
+        "error": {"code": "service_unavailable", "message": "Generation service is temporarily unavailable"}
+    }

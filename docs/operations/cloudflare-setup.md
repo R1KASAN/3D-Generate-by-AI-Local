@@ -1,3 +1,8 @@
+# HISTORICAL — do not execute for feature 004
+
+Feature 004 does not configure DNS, an origin certificate, or a custom
+hostname. Use the operator-run Quick Tunnel launcher and the single-host guide.
+
 # Cloudflare Public Entry Setup
 
 This runbook configures the provider layer for the existing origin. It does

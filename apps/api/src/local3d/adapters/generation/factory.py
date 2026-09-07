@@ -38,4 +38,9 @@ def build_real_adapter(settings: Settings) -> GenerationAdapter:
 
     client = ComfyClient(settings.comfyui_base_url)
     resolver = OutputResolver(settings.comfyui_output_root)
-    return ComfyGenerationAdapter(client=client, mapper=mapper, resolver=resolver)
+    return ComfyGenerationAdapter(
+        client=client,
+        mapper=mapper,
+        resolver=resolver,
+        workflow_revision=mapper.workflow_revision,
+    )

@@ -1,3 +1,8 @@
+# HISTORICAL — WireGuard is out of scope for feature 004
+
+Feature 004 uses cloudflared outbound from the single Notebook. Do not create
+or validate a WireGuard listener for this feature.
+
 # Origin WireGuard Transport Boundary (SC-018)
 
 **Feature**: `003-outbound-tunnel-entry` | **Tasks**: T058a | **Date**: 2026-09-06

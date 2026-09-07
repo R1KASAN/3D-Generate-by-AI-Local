@@ -1,4 +1,4 @@
-"""Full external generation flow against the public endpoint (feature-002 T026).
+"""Full external generation flow against the feature-004 Quick Tunnel endpoint.
 
 Uploads a real image to the public hostname, polls status with the
 returned X-Job-Token until the job completes, downloads the result, and
@@ -67,7 +67,10 @@ def main() -> int:
         return 0 if check.verdict == "PASS" else 1
     if not args.hostname or args.image is None:
         parser.error("--hostname and --image are required for the external flow")
+    if not args.hostname.lower().endswith(".trycloudflare.com"):
+        parser.error("--hostname must be the temporary trycloudflare.com host")
     base = f"https://{args.hostname}"
+    evidence_host = "<redacted-quick-tunnel>"
 
     def _snapshot(directory: Path | None) -> set[str] | None:
         if directory is None or not directory.exists():
@@ -78,7 +81,7 @@ def main() -> int:
 
     if not args.confirm_off_campus:
         checks = [Check("vantage-point", "--confirm-off-campus was not supplied", "run from outside the university network", "BLOCKED")]
-        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T026", [f"- Hostname: {args.hostname}"], checks, "BLOCKED")
+        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T034", [f"- Hostname: {evidence_host}"], checks, "BLOCKED")
         print(f"BLOCKED: acceptance evidence written to {args.evidence}")
         return 1
     if not args.image.is_file():
@@ -97,7 +100,7 @@ def main() -> int:
         checks.append(Check("create-job", "HTTP 201, job created", "job accepted", "PASS"))
     except Exception as exc:  # noqa: BLE001
         checks.append(Check("create-job", f"failed with {type(exc).__name__}", "job accepted", "FAIL"))
-        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T026", [f"- Hostname: {args.hostname}"], checks, "FAIL")
+        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T034", [f"- Hostname: {evidence_host}"], checks, "FAIL")
         print(f"FAIL: acceptance evidence written to {args.evidence}")
         return 1
 
@@ -105,7 +108,7 @@ def main() -> int:
     deadline = time.monotonic() + args.max_wait_seconds
     status = None
     while time.monotonic() < deadline:
-        request = urllib.request.Request(f"{base}/api/v1/jobs/{job_id}", headers={"X-Job-Token": token})
+        request = urllib.request.Request(f"{base}/api/v1/jobs/{job_id}", headers={"X-Job-Token": token, "Accept": "application/json"})
         with urllib.request.urlopen(request, timeout=15) as response:
             status = json.loads(response.read())
         if status["status"] in ("completed", "failed"):
@@ -114,7 +117,7 @@ def main() -> int:
     completed = bool(status) and status.get("status") == "completed"
     checks.append(Check("job-completes", f"final status={status.get('status') if status else 'timeout'}", "status reaches completed", "PASS" if completed else "FAIL"))
     if not completed:
-        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T026", [f"- Hostname: {args.hostname}"], checks, "FAIL")
+        write_evidence(args.evidence, "External Acceptance Flow Evidence", "T034", [f"- Hostname: {evidence_host}"], checks, "FAIL")
         print(f"FAIL: acceptance evidence written to {args.evidence}")
         return 1
 
@@ -165,8 +168,8 @@ def main() -> int:
     write_evidence(
         args.evidence,
         "External Acceptance Flow Evidence",
-        "T026",
-        [f"- Hostname: {args.hostname}"],
+        "T034",
+        [f"- Hostname: {evidence_host}"],
         checks,
         verdict,
         footnote="Compute --expected-sha256 on the laptop's storage directory separately (never transmit the token used to fetch it alongside the hash).",

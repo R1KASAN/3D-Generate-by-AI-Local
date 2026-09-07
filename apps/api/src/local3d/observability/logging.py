@@ -14,6 +14,11 @@ class _StructuredFormatter(logging.Formatter):
         )
 
 
+_SAFE_DETAIL_KEYS = frozenset(
+    {"request_id", "duration_ms", "failure_category", "from_state", "to_state", "queue_position"}
+)
+
+
 def configure_logging(name: str = "local3d") -> logging.Logger:
     logger = logging.getLogger(name)
     logger.setLevel(logging.INFO)
@@ -33,12 +38,22 @@ def log_job_event(
     safe_message: str,
     details: dict[str, Any] | None = None,
 ) -> None:
-    """Log only the safe correlation fields; ``details`` is intentionally ignored."""
+    """Log allowlisted diagnostic fields while dropping content and credentials."""
+
+    safe_details: list[str] = []
+    for key in sorted(_SAFE_DETAIL_KEYS):
+        if not details or key not in details:
+            continue
+        value = details[key]
+        if isinstance(value, (str, int, float, bool)):
+            safe_details.append(f"{key}={value}")
+    suffix = " " + " ".join(safe_details) if safe_details else ""
 
     logger.info(
-        "job_id=%s event=%s message=%s",
+        "job_id=%s event=%s message=%s%s",
         str(job_id),
         event_type,
         safe_message,
+        suffix,
         extra={"job_id": str(job_id), "event_type": event_type},
     )
