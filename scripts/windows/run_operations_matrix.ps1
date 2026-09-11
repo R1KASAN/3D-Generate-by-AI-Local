@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
     [string]$ProjectRoot = '',
-    [string]$EvidencePath = ''
+    [string]$EvidencePath = '',
+    [switch]$Feature005
 )
 
 Set-StrictMode -Version Latest
@@ -16,6 +17,47 @@ Set-Content -LiteralPath $fatalLog -Value '' -Encoding utf8
 trap {
     ($_ | Out-String).Trim() | Set-Content -LiteralPath $fatalLog -Encoding utf8
     break
+}
+
+if ($Feature005) {
+    if ([string]::IsNullOrWhiteSpace($EvidencePath)) { $EvidencePath = Join-Path $ProjectRoot 'evidence\feature-005\us3-failure-matrix.md' }
+    $groups = [ordered]@{
+        'invalid-upload-and-capacity' = 'apps/api/tests/contract/test_job_status_and_failures.py'
+        'queue-and-cancellation' = 'apps/api/tests/integration/test_queue_cancellation.py'
+        'restart-and-dependency-recovery' = 'apps/api/tests/integration/test_adapter_recovery.py'
+        'submission-bounds-and-cleanup' = 'apps/api/tests/integration/test_submission_bounds.py'
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:NGINX_BINARY)) {
+        $groups['nginx-upstream-timeout-upload-host'] = 'tests/security/test_nginx_runtime.py'
+    }
+    $results = [System.Collections.Generic.List[object]]::new()
+    foreach ($entry in $groups.GetEnumerator()) {
+        $startedUtc = [DateTime]::UtcNow
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = 'Continue'
+        $output = & uv run --project apps/api python -m pytest $entry.Value -q 2>&1 | Out-String
+        $ErrorActionPreference = $previousErrorAction
+        $exitCode = $LASTEXITCODE
+        $sanitized = ($output -replace '(?i)(token|password|secret)\s*[:=]\s*\S+', '$1=<redacted>')
+        $sanitized = $sanitized.Replace($ProjectRoot, '<project>').Replace($env:TEMP, '<temp>')
+        $sanitized = $sanitized -replace '(?i)[A-Z]:\\+Users\\+[^\s''"]+', '<private-path>'
+        $leaksScan = -not ($sanitized -match '(?i)(bearer\s+[a-z0-9._-]{12,}|trycloudflare\.com|-----begin (private|open)ssh|api[_-]?key\s*[:=])')
+        $results.Add([PSCustomObject]@{
+            Case = $entry.Key
+            StartedUtc = $startedUtc.ToString('o')
+            FinishedUtc = [DateTime]::UtcNow.ToString('o')
+            Passed = (($exitCode -eq 0) -and $leaksScan)
+            ExitCode = $exitCode
+            Cleanup = 'pytest subprocess completed; temporary test state is fixture-scoped'
+            LeaksScan = $leaksScan
+            Output = (($sanitized -replace '\r?\n', ' ').Trim())
+        })
+    }
+    New-Item -ItemType Directory -Path (Split-Path -Parent $EvidencePath) -Force | Out-Null
+    $results | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $EvidencePath -Encoding utf8
+    if (@($results | Where-Object { -not $_.Passed }).Count) { throw 'Feature 005 failure matrix had a failing case or evidence-leak scan failure.' }
+    Write-Output "PASS: Feature 005 failure matrix evidence written to $EvidencePath"
+    exit 0
 }
 $services = @('Local3D-ComfyUI', 'Local3D-API', 'Local3D-Web', 'Local3D-Caddy')
 $checks = [System.Collections.Generic.List[object]]::new()

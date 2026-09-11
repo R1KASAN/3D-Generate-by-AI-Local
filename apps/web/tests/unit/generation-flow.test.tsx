@@ -1,12 +1,27 @@
 import { describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
-import { cancelJob, createJob, downloadJob, getJob, JobsApiError, modelUrl, userFacingJobError } from "../../lib/api/jobs";
+import { cancelJob, createJob, downloadJob, getJob, JobsApiError, JobsTransportError, modelUrl, userFacingJobError } from "../../lib/api/jobs";
 import { GenerationForm } from "../../components/generation-form";
 import { GenerationResult } from "../../components/generation-result";
 import HomePage from "../../app/page";
 
 describe("generation API client", () => {
+  it("uses the configured stable API origin for production requests", async () => {
+    vi.stubEnv("NEXT_PUBLIC_API_BASE_URL", "https://mango74-api.mangosgo.com/api/v1");
+    const fetcher = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ job_id: "job-1", status: "queued", job_token: "token-1" }), {
+        status: 201,
+        headers: { "content-type": "application/json" },
+      }),
+    );
+
+    await createJob(new File(["image"], "input.png", { type: "image/png" }), fetcher);
+
+    expect(fetcher.mock.calls[0][0]).toBe("https://mango74-api.mangosgo.com/api/v1/jobs");
+    vi.unstubAllEnvs();
+  });
+
   it("sends multipart upload and keeps the returned token in memory", async () => {
     const fetcher = vi.fn().mockResolvedValue(
       new Response(JSON.stringify({ job_id: "job-1", status: "queued", job_token: "token-1" }), {
@@ -62,6 +77,12 @@ describe("generation API client", () => {
       /temporarily unavailable/i,
     );
     expect(userFacingJobError(new Error("network"), "fallback")).toBe("network");
+    expect(userFacingJobError(new JobsTransportError(), "fallback")).toMatch(/temporarily unavailable/i);
+  });
+
+  it("does not convert a transport failure into a missing-job response", async () => {
+    const fetcher = vi.fn().mockRejectedValue(new Error("Failed to fetch"));
+    await expect(getJob("job-1", "token-1", fetcher)).rejects.toBeInstanceOf(JobsTransportError);
   });
 
   it("maps low storage and non-JSON edge failures without exposing proxy text", async () => {

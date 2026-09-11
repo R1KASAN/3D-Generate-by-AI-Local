@@ -32,7 +32,7 @@ test("shows safe failure text and never engine details", async ({ page }) => {
         model_url: null,
         download_url: null,
         created_at: "2026-01-01T00:00:00Z",
-        expires_at: "2026-01-02T00:00:00Z",
+        expires_at: "2099-01-02T00:00:00Z",
       }),
     });
   });
@@ -52,7 +52,7 @@ test("shows safe failure text and never engine details", async ({ page }) => {
         model_url: null,
         download_url: null,
         created_at: "2026-01-01T00:00:00Z",
-        expires_at: "2026-01-02T00:00:00Z",
+        expires_at: "2099-01-02T00:00:00Z",
       }),
     });
   });
@@ -80,7 +80,7 @@ test("restores the owner credential after refresh and cancels a waiting job", as
     model_url: null,
     download_url: null,
     created_at: "2026-01-01T00:00:00Z",
-    expires_at: "2026-01-02T00:00:00Z",
+    expires_at: "2099-01-02T00:00:00Z",
   };
   let cancelled = false;
 

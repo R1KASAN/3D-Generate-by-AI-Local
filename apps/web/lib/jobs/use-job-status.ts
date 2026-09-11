@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import { getJob, Job, JobStatus, userFacingJobError } from "../api/jobs";
 
@@ -29,7 +29,9 @@ export function useJobStatus(
   const { initialJob, fetchStatus = defaultFetchStatus } = options;
   const [job, setJob] = useState<Job | undefined>(initialJob);
   const [error, setError] = useState<string | null>(null);
+  const lastConfirmedJob = useRef<Job | undefined>(initialJob);
   const replaceJob = useCallback((latest: Job) => {
+    lastConfirmedJob.current = latest;
     setJob(latest);
     setError(null);
   }, []);
@@ -46,6 +48,7 @@ export function useJobStatus(
       try {
         const latest = await fetchStatus(jobId, jobToken, controller.signal);
         if (!active) return;
+        lastConfirmedJob.current = latest;
         setJob(latest);
         setError(null);
         if (TERMINAL.has(latest.status)) return;
@@ -54,6 +57,7 @@ export function useJobStatus(
         timer = setTimeout(() => void poll(), delay);
       } catch (caught) {
         if (!active) return;
+        if (lastConfirmedJob.current) setJob(lastConfirmedJob.current);
         setError(userFacingJobError(caught, "Status unavailable; retrying."));
         const delay = attempts === 0 ? 2_000 : attempts === 1 ? 5_000 : 10_000;
         attempts += 1;

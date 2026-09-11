@@ -1,0 +1,17 @@
+{
+  "hosting": {
+    "public": "apps/web/out",
+    "redirects": [
+      {
+        "source": "/",
+        "destination": "/mango74/",
+        "type": 301
+      }
+    ],
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ]
+  }
+}

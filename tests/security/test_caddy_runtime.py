@@ -83,4 +83,5 @@ def test_caddy_routes_api_and_web_and_returns_maintenance(tmp_path: Path) -> Non
     finally:
         process.terminate()
         process.wait(timeout=10)
-        api.shutdown(); api.server_close()
+        api.shutdown()
+        api.server_close()

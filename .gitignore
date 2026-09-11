@@ -60,6 +60,20 @@ coverage/
 /apps/api/storage/
 /apps/web/test-results/
 /deploy/windows/services/*.exe
+/deploy/nginx/*.exe
+/deploy/nginx/logs/
+/deploy/cloudflared/*.token
+/deploy/cloudflared/*.cred.json
+/deploy/cloudflared/*.pem
+/artifacts/
+/evidence/feature-005/private/
+/evidence/feature-005/*.private.*
+/evidence/feature-005/*token*
+/evidence/feature-005/*credential*
+/evidence/feature-005/*secret*
+**/uploads/
+**/generated/
+*.sqlite3
 playwright-report/
 logs/
 tmp/
@@ -82,6 +96,7 @@ ComfyUI/temp/
 # Local caches
 .cache/
 cache/
+.firebase/
 
 # Local code-index and editor state
 .codebase-memory/

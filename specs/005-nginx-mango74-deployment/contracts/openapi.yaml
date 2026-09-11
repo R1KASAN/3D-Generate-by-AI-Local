@@ -1,0 +1,397 @@
+openapi: 3.1.0
+info:
+  title: Mango74 Stable AI API
+  version: 0.2.0
+  description: >-
+    Cross-origin public contract for the existing Local 3D generation API.
+    Cloudflare routes the stable hostname through a named Tunnel to loopback
+    Nginx; this contract exposes no direct Notebook endpoint.
+servers:
+  - url: https://mango74-api.mangosgo.com/api/v1
+    description: Authorized production API boundary
+x-cors-policy:
+  productionOrigin: https://www.mangosgo.com
+  optionalPreviewOrigin: https://inw3d-ai-local.web.app
+  allowCredentials: false
+  allowedMethods: [GET, POST, OPTIONS]
+  allowedHeaders: [Accept, Content-Type, X-Job-Token]
+  wildcardAllowed: false
+paths:
+  /jobs:
+    post:
+      operationId: createJob
+      summary: Validate an image and durably admit one generation job
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: Verified JPEG or PNG, at most 10 MiB
+      responses:
+        "201":
+          description: Job durably accepted; raw job token returned once
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobCreated"
+        "413":
+          $ref: "#/components/responses/UploadTooLarge"
+        "415":
+          $ref: "#/components/responses/UnsupportedImage"
+        "422":
+          $ref: "#/components/responses/CorruptImage"
+        "429":
+          $ref: "#/components/responses/SubmissionLimited"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+        "507":
+          $ref: "#/components/responses/LowStorage"
+  /jobs/{job_id}:
+    get:
+      operationId: getJob
+      summary: Read the authorized durable job state
+      security:
+        - JobToken: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Current public job state
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /jobs/{job_id}/cancel:
+    post:
+      operationId: cancelJob
+      summary: Cancel an authorized job that is still queued
+      security:
+        - JobToken: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Job is durably cancelled or was already cancelled
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/NoStore"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "409":
+          $ref: "#/components/responses/JobNotCancellable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /jobs/{job_id}/model:
+    get:
+      operationId: previewModel
+      summary: Fetch the authorized finalized GLB for browser preview
+      security:
+        - JobToken: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Validated atomically published GLB bytes
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PrivateNoStore"
+          content:
+            model/gltf-binary:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "409":
+          $ref: "#/components/responses/ResultUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /jobs/{job_id}/download:
+    get:
+      operationId: downloadModel
+      summary: Download the same authorized finalized GLB
+      security:
+        - JobToken: []
+      parameters:
+        - $ref: "#/components/parameters/JobId"
+      responses:
+        "200":
+          description: Validated GLB attachment
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/PrivateNoStore"
+            Content-Disposition:
+              schema:
+                type: string
+          content:
+            model/gltf-binary:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/JobNotFound"
+        "409":
+          $ref: "#/components/responses/ResultUnavailable"
+        "503":
+          $ref: "#/components/responses/ServiceUnavailable"
+  /health/live:
+    get:
+      operationId: getLiveness
+      summary: Report that FastAPI can answer
+      responses:
+        "200":
+          description: API process is alive
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /health/ready:
+    get:
+      operationId: getReadiness
+      summary: Report safe job-admission readiness
+      responses:
+        "200":
+          description: Required admission dependencies are ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/HealthUnavailable"
+  /health/engine:
+    get:
+      operationId: getEngineHealth
+      summary: Report safe ComfyUI workflow reachability
+      responses:
+        "200":
+          description: Private workflow dependency responds within its bound
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          $ref: "#/components/responses/HealthUnavailable"
+components:
+  securitySchemes:
+    JobToken:
+      type: apiKey
+      in: header
+      name: X-Job-Token
+      description: >-
+        One-job capability returned once at creation. It never appears in a
+        URL, log, database row, release archive, or evidence file.
+  parameters:
+    JobId:
+      name: job_id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  headers:
+    NoStore:
+      schema:
+        type: string
+        const: no-store
+    PrivateNoStore:
+      schema:
+        type: string
+        const: private, no-store
+  schemas:
+    JobStatus:
+      type: string
+      enum: [queued, running, completed, failed, cancelled]
+    SafeError:
+      type: object
+      additionalProperties: false
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          pattern: "^[a-z][a-z0-9_]{0,63}$"
+        message:
+          type: string
+          maxLength: 240
+    Job:
+      type: object
+      additionalProperties: false
+      required:
+        - job_id
+        - status
+        - progress_percent
+        - progress_message
+        - queue_position
+        - queue_position_is_approximate
+        - error
+        - model_url
+        - download_url
+        - created_at
+        - expires_at
+      properties:
+        job_id:
+          type: string
+          format: uuid
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        progress_percent:
+          oneOf:
+            - type: integer
+              minimum: 0
+              maximum: 100
+            - type: "null"
+        progress_message:
+          oneOf:
+            - type: string
+              maxLength: 200
+            - type: "null"
+        queue_position:
+          oneOf:
+            - type: integer
+              minimum: 1
+            - type: "null"
+        queue_position_is_approximate:
+          type: boolean
+        error:
+          oneOf:
+            - $ref: "#/components/schemas/SafeError"
+            - type: "null"
+        model_url:
+          oneOf:
+            - type: string
+              pattern: "^/api/v1/jobs/[0-9a-f-]+/model$"
+            - type: "null"
+        download_url:
+          oneOf:
+            - type: string
+              pattern: "^/api/v1/jobs/[0-9a-f-]+/download$"
+            - type: "null"
+        created_at:
+          type: string
+          format: date-time
+        expires_at:
+          type: string
+          format: date-time
+    JobCreated:
+      allOf:
+        - $ref: "#/components/schemas/Job"
+        - type: object
+          required: [job_token]
+          properties:
+            job_token:
+              type: string
+              minLength: 43
+    Health:
+      type: object
+      additionalProperties: false
+      required: [status]
+      properties:
+        status:
+          type: string
+          enum: [ok, degraded, unavailable]
+    ErrorResponse:
+      type: object
+      additionalProperties: false
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/SafeError"
+  responses:
+    JobNotFound:
+      description: >-
+        Unknown, expired, or inaccessible job. Wrong and cross-job credentials
+        intentionally receive the same response.
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UploadTooLarge:
+      description: Image exceeds the 10 MiB API limit
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnsupportedImage:
+      description: Verified content is not JPEG or PNG
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    CorruptImage:
+      description: Image cannot be safely decoded
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    SubmissionLimited:
+      description: Queue, rate, or duplicate-input capacity is exhausted
+      headers:
+        Retry-After:
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ServiceUnavailable:
+      description: Requested backend capability is safely unavailable
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    HealthUnavailable:
+      description: Requested health scope is safely unavailable
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Health"
+    LowStorage:
+      description: New admission is disabled below the free-space threshold
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ResultUnavailable:
+      description: No complete authorized finalized result can be served
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/PrivateNoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    JobNotCancellable:
+      description: The job has left the cancellable waiting state
+      headers:
+        Cache-Control:
+          $ref: "#/components/headers/NoStore"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"

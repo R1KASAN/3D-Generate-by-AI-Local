@@ -22,10 +22,13 @@ test("uploads an image, reaches completion, previews, and downloads the GLB", as
   await expect(page.getByRole("status")).toContainText("completed", { timeout: 20_000 });
   await expect(page.getByRole("button", { name: "Download GLB" })).toBeVisible();
   await expect(page.locator("canvas")).toBeVisible({ timeout: 10_000 });
-  expect(apiOrigins).toEqual(new Set(["http://127.0.0.1:3100"]));
+  expect(apiOrigins).toEqual(new Set(["http://127.0.0.1:18000"]));
   expect(
     await page.evaluate(() => {
-      const stored = window.sessionStorage.getItem("local3d:last-job");
+      const storageKey = Object.keys(window.sessionStorage).find((key) =>
+        key.startsWith("local3d:last-job:"),
+      );
+      const stored = storageKey ? window.sessionStorage.getItem(storageKey) : null;
       if (!stored) return false;
       const parsed = JSON.parse(stored) as { job_id?: string; job_token?: string };
       return Boolean(parsed.job_id && parsed.job_token);

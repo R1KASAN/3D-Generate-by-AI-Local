@@ -115,3 +115,34 @@ def test_environment_aliases_are_loaded_without_posix_path_assumptions() -> None
 
     assert settings.storage_root == Path("runtime/storage")
     assert settings.database_path == Path("runtime/storage/jobs.sqlite3")
+
+
+def test_production_cors_defaults_to_the_exact_frontend_origin() -> None:
+    settings = Settings(app_env="production")
+
+    assert settings.cors_allowed_origins == ("https://www.mangosgo.com",)
+    assert settings.cors_preview_origin_enabled is False
+
+
+def test_cors_origins_can_be_loaded_from_a_comma_separated_allowlist() -> None:
+    settings = load_settings(
+        {
+            "CORS_ALLOWED_ORIGINS": "https://www.mangosgo.com, https://inw3d-ai-local.web.app",
+            "CORS_PREVIEW_ORIGIN_ENABLED": "true",
+        }
+    )
+
+    assert settings.cors_allowed_origins == (
+        "https://www.mangosgo.com",
+        "https://inw3d-ai-local.web.app",
+    )
+    assert settings.cors_preview_origin_enabled is True
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["*", "http://www.mangosgo.com", "https://www.mangosgo.com/mango74", "https://www.mangosgo.com:443"],
+)
+def test_cors_rejects_wildcards_paths_ports_and_http(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings(cors_allowed_origins=value)

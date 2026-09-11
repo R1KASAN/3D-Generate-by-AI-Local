@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<service>
+  <id>Local3D-Nginx</id>
+  <name>Local 3D Nginx</name>
+  <description>Loopback-only reverse proxy for the Mango74 stable AI API.</description>
+  <executable>%BASE%\nginx.exe</executable>
+  <arguments>-p "C:\ProgramData\Local3D\nginx" -c "C:\ProgramData\Local3D\nginx\nginx.conf" -g "daemon off;"</arguments>
+  <workingdirectory>C:\ProgramData\Local3D\nginx</workingdirectory>
+  <startmode>Automatic</startmode>
+  <depend>Local3D-API</depend>
+  <stoptimeout>30 sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec" />
+  <log mode="roll-by-size-time">
+    <sizeThreshold>10485760</sizeThreshold>
+    <pattern>yyyyMMdd</pattern>
+    <keepFiles>7</keepFiles>
+  </log>
+  <serviceaccount>
+    <domain>NT AUTHORITY</domain>
+    <user>LocalService</user>
+    <allowservicelogon>true</allowservicelogon>
+  </serviceaccount>
+</service>

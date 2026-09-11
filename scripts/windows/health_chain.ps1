@@ -14,6 +14,8 @@ param(
     [ValidateRange(1, 65535)][int]$ComfyPort = 8188,
     [string]$WorkflowManifest = 'workflows\hunyuan3d\workflow-manifest.json',
     [string]$QuickTunnelUrl,
+    [string]$StableApiUrl,
+    [switch]$Feature005,
     [switch]$Json
 )
 
@@ -22,6 +24,10 @@ $ErrorActionPreference = 'Stop'
 
 function Probe-Http([string]$Uri) {
     try { Invoke-WebRequest -UseBasicParsing -Uri $Uri -TimeoutSec 5 -ErrorAction Stop | Out-Null; return $true }
+    catch { return $false }
+}
+function Probe-HttpWithHost([string]$Uri, [string]$HostName) {
+    try { Invoke-WebRequest -UseBasicParsing -Uri $Uri -Headers @{ Host = $HostName } -TimeoutSec 5 -ErrorAction Stop | Out-Null; return $true }
     catch { return $false }
 }
 function Test-CaddyHealth { [pscustomobject]@{ Healthy = (Probe-Http "http://127.0.0.1:${CaddyPort}/api/v1/health/live"); Detail = "loopback Caddy :$CaddyPort" } }
@@ -48,22 +54,50 @@ function Test-ListenerBoundaryHealth {
     [pscustomobject]@{ Healthy = ($bad.Count -eq 0); Detail = if ($bad.Count) { 'non-loopback listener detected' } else { 'application ports loopback-only' } }
 }
 function Test-ProcessBoundaryHealth {
-    $definition = Join-Path (Get-Location) 'deploy\windows\services\caddy.xml'
-    [pscustomobject]@{ Healthy = (Test-Path -LiteralPath $definition); Detail = 'single-machine service definition present' }
+    $definitionName = if ($Feature005) { 'nginx.xml' } else { 'caddy.xml' }
+    $definition = Join-Path (Get-Location) "deploy\windows\services\$definitionName"
+    if ($Feature005) {
+        $nginx = Get-Service -Name 'Local3D-Nginx' -ErrorAction SilentlyContinue
+        $caddy = Get-Service -Name 'Local3D-Caddy' -ErrorAction SilentlyContinue
+        $healthy = (Test-Path -LiteralPath $definition) -and $null -ne $nginx -and $nginx.Status -eq 'Running' -and ($null -eq $caddy -or $caddy.Status -ne 'Running')
+        return [pscustomobject]@{ Healthy = $healthy; Detail = "Nginx service running and Caddy not running; definition=$definitionName" }
+    }
+    [pscustomobject]@{ Healthy = (Test-Path -LiteralPath $definition); Detail = "single-machine $definitionName present" }
 }
 
-$results = [ordered]@{
-    Caddy = Test-CaddyHealth
-    Web = Test-WebHealth
-    Api = Test-ApiHealth
-    Storage = Test-StorageHealth
-    Workflow = Test-WorkflowHealth
-    ComfyUI = Test-ComfyHealth
-    GPU = Test-GpuHealth
-    QuickTunnel = Test-QuickTunnelHealth
-    PublicRoute = Test-PublicRouteHealth
-    ListenerBoundary = Test-ListenerBoundaryHealth
-    ProcessBoundary = Test-ProcessBoundaryHealth
+if ($Feature005) {
+    $apiOriginHealthy = $false
+    $apiDetail = 'stable API URL not supplied'
+    if ($StableApiUrl) {
+        $apiOriginHealthy = Probe-Http ($StableApiUrl.TrimEnd('/') + '/health/live')
+        $apiDetail = 'named Tunnel stable API probe'
+    }
+    $results = [ordered]@{
+        Nginx = [pscustomobject]@{ Healthy = ((Test-ProcessBoundaryHealth).Healthy -and (Probe-HttpWithHost "http://127.0.0.1:${CaddyPort}/api/v1/health/live" 'mango74-api.mangosgo.com')); Detail = "loopback Nginx :$CaddyPort" }
+        Api = Test-ApiHealth
+        Storage = Test-StorageHealth
+        Workflow = Test-WorkflowHealth
+        ComfyUI = Test-ComfyHealth
+        GPU = Test-GpuHealth
+        NamedTunnel = [pscustomobject]@{ Healthy = $false; Detail = 'named Tunnel service is checked by verify_named_tunnel.ps1' }
+        StablePublicApi = [pscustomobject]@{ Healthy = $apiOriginHealthy; Detail = $apiDetail }
+        ListenerBoundary = Test-ListenerBoundaryHealth
+        ProcessBoundary = Test-ProcessBoundaryHealth
+    }
+} else {
+    $results = [ordered]@{
+        Caddy = Test-CaddyHealth
+        Web = Test-WebHealth
+        Api = Test-ApiHealth
+        Storage = Test-StorageHealth
+        Workflow = Test-WorkflowHealth
+        ComfyUI = Test-ComfyHealth
+        GPU = Test-GpuHealth
+        QuickTunnel = Test-QuickTunnelHealth
+        PublicRoute = Test-PublicRouteHealth
+        ListenerBoundary = Test-ListenerBoundaryHealth
+        ProcessBoundary = Test-ProcessBoundaryHealth
+    }
 }
 if ($Json) { $results | ConvertTo-Json -Depth 4; exit 0 }
 $failed = 0

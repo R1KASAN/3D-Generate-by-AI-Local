@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import socket
-import sys
 from pathlib import Path
 
 APPROVED_PUBLIC_ADDRESS = "161.200.90.4"

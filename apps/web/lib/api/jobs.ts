@@ -1,3 +1,5 @@
+import { apiUrl, resolveApiResource } from "../config/public-runtime";
+
 export type JobStatus = "queued" | "running" | "completed" | "failed" | "cancelled";
 
 export interface SafeError {
@@ -36,7 +38,15 @@ export class JobsApiError extends Error {
   }
 }
 
+export class JobsTransportError extends Error {
+  constructor() {
+    super("The AI service is temporarily unavailable. Please retry.");
+    this.name = "JobsTransportError";
+  }
+}
+
 export function userFacingJobError(error: unknown, fallback: string): string {
+  if (error instanceof JobsTransportError) return error.message;
   if (!(error instanceof JobsApiError)) {
     return error instanceof Error && error.message ? error.message : fallback;
   }
@@ -79,10 +89,18 @@ async function expectJson<T>(response: Response): Promise<T> {
   );
 }
 
+async function safeFetch(fetcher: Fetcher, input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetcher(input, init);
+  } catch {
+    throw new JobsTransportError();
+  }
+}
+
 export async function createJob(file: File, fetcher: Fetcher = fetch): Promise<JobCreated> {
   const body = new FormData();
   body.append("file", file, file.name);
-  const response = await fetcher("/api/v1/jobs", { method: "POST", body });
+  const response = await safeFetch(fetcher, apiUrl("/jobs"), { method: "POST", body });
   return expectJson<JobCreated>(response);
 }
 
@@ -92,7 +110,7 @@ export async function getJob(
   fetcher: Fetcher = fetch,
   signal?: AbortSignal,
 ): Promise<Job> {
-  const response = await fetcher(`/api/v1/jobs/${encodeURIComponent(jobId)}`, {
+  const response = await safeFetch(fetcher, apiUrl(`/jobs/${encodeURIComponent(jobId)}`), {
     headers: { "X-Job-Token": jobToken, Accept: "application/json" },
     cache: "no-store",
     signal,
@@ -105,7 +123,7 @@ export async function cancelJob(
   jobToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<Job> {
-  const response = await fetcher(`/api/v1/jobs/${encodeURIComponent(jobId)}/cancel`, {
+  const response = await safeFetch(fetcher, apiUrl(`/jobs/${encodeURIComponent(jobId)}/cancel`), {
     method: "POST",
     headers: { "X-Job-Token": jobToken, Accept: "application/json" },
     cache: "no-store",
@@ -118,7 +136,7 @@ export async function downloadJob(
   jobToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<Response> {
-  const response = await fetcher(`/api/v1/jobs/${encodeURIComponent(jobId)}/download`, {
+  const response = await safeFetch(fetcher, apiUrl(`/jobs/${encodeURIComponent(jobId)}/download`), {
     headers: { "X-Job-Token": jobToken },
     cache: "no-store",
   });
@@ -131,7 +149,7 @@ export async function modelResponse(
   jobToken: string,
   fetcher: Fetcher = fetch,
 ): Promise<Response> {
-  const response = await fetcher(`/api/v1/jobs/${encodeURIComponent(jobId)}/model`, {
+  const response = await safeFetch(fetcher, apiUrl(`/jobs/${encodeURIComponent(jobId)}/model`), {
     headers: { "X-Job-Token": jobToken },
     cache: "no-store",
   });
@@ -140,9 +158,13 @@ export async function modelResponse(
 }
 
 export function modelUrl(jobId: string): string {
-  return `/api/v1/jobs/${encodeURIComponent(jobId)}/model`;
+  return apiUrl(`/jobs/${encodeURIComponent(jobId)}/model`);
 }
 
 export function downloadUrl(jobId: string): string {
-  return `/api/v1/jobs/${encodeURIComponent(jobId)}/download`;
+  return apiUrl(`/jobs/${encodeURIComponent(jobId)}/download`);
+}
+
+export function resolveJobResource(location: string): string {
+  return resolveApiResource(location);
 }

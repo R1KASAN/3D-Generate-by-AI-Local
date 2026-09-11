@@ -2,7 +2,8 @@
 param(
     [string]$ProjectRoot = '',
     [string]$EvidencePath = '',
-    [switch]$RunGeneration
+    [switch]$RunGeneration,
+    [switch]$Feature005
 )
 
 Set-StrictMode -Version Latest
@@ -48,6 +49,17 @@ $definitions = @(
         Dependency = 'Local3D-Web'
     }
 )
+
+if ($Feature005) {
+    $definitions = @($definitions | Where-Object { $_.Name -notin @('Local3D-Web', 'Local3D-Caddy') })
+    $definitions += [PSCustomObject]@{
+        Name = 'Local3D-Nginx'
+        File = Join-Path $ProjectRoot 'deploy\windows\services\nginx.xml'
+        Bind = '127.0.0.1:8080'
+        Port = '8080'
+        Dependency = 'Local3D-API'
+    }
+}
 
 $checks = [System.Collections.Generic.List[object]]::new()
 function Add-Check {
@@ -99,6 +111,14 @@ foreach ($definition in $definitions) {
             [string]$service.arguments -match "-{1,2}(port|hostname)\s+$($definition.Port)")
         $executablePath = ([string]$service.executable).Replace('%BASE%', (Join-Path $ProjectRoot 'deploy\windows\services'))
         $workingDirectory = ([string]$service.workingdirectory).Replace('%BASE%', (Join-Path $ProjectRoot 'deploy\windows\services'))
+        if ($Feature005 -and $definition.Name -eq 'Local3D-Nginx') {
+            $nginxRuntime = Join-Path $env:ProgramData 'Local3D\nginx'
+            $executablePath = Join-Path (Join-Path $ProjectRoot 'deploy\windows\services') 'nginx.exe'
+            $workingDirectory = $nginxRuntime
+            $runtimeConfig = Join-Path $nginxRuntime 'nginx.conf'
+            $bindPass = (Test-Path -LiteralPath $runtimeConfig) -and
+                ((Get-Content -LiteralPath $runtimeConfig -Raw) -match '(?m)listen\s+127\.0\.0\.1:8080')
+        }
         $pathPass = (Test-Path -LiteralPath $executablePath) -and (Test-Path -LiteralPath $workingDirectory)
         $valid = (
             [string]$service.id -eq $definition.Name -and
@@ -144,10 +164,15 @@ if ($allInstalled -and $allRunning -and $allRestricted) {
     try {
         $api = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8000/api/v1/health/ready' -TimeoutSec 10
         $comfy = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8188/system_stats' -TimeoutSec 10
-        $web = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000' -TimeoutSec 10
-        $caddy = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8080/api/v1/health/live' -TimeoutSec 10
-        $healthPass = ($api.StatusCode -eq 200 -and $comfy.StatusCode -eq 200 -and $web.StatusCode -eq 200 -and $caddy.StatusCode -eq 200)
-        Add-Check 'health' "api=$($api.StatusCode); comfyui=$($comfy.StatusCode); web=$($web.StatusCode); caddy=$($caddy.StatusCode)" 'API, ComfyUI, Web, and Caddy healthy after ordered startup' $(if ($healthPass) { 'PASS' } else { 'FAIL' })
+        $proxy = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:8080/api/v1/health/live' -Headers @{ Host = 'mango74-api.mangosgo.com' } -TimeoutSec 10
+        if ($Feature005) {
+            $healthPass = ($api.StatusCode -eq 200 -and $comfy.StatusCode -eq 200 -and $proxy.StatusCode -eq 200)
+            Add-Check 'health' "api=$($api.StatusCode); comfyui=$($comfy.StatusCode); nginx=$($proxy.StatusCode)" 'API, ComfyUI, and Nginx healthy after ordered startup' $(if ($healthPass) { 'PASS' } else { 'FAIL' })
+        } else {
+            $web = Invoke-WebRequest -UseBasicParsing -Uri 'http://127.0.0.1:3000' -TimeoutSec 10
+            $healthPass = ($api.StatusCode -eq 200 -and $comfy.StatusCode -eq 200 -and $web.StatusCode -eq 200 -and $proxy.StatusCode -eq 200)
+            Add-Check 'health' "api=$($api.StatusCode); comfyui=$($comfy.StatusCode); web=$($web.StatusCode); caddy=$($proxy.StatusCode)" 'API, ComfyUI, Web, and Caddy healthy after ordered startup' $(if ($healthPass) { 'PASS' } else { 'FAIL' })
+        }
     } catch {
         Add-Check 'health' 'one or more service health requests failed' 'API, ComfyUI, and web service healthy after ordered startup' 'FAIL'
     }

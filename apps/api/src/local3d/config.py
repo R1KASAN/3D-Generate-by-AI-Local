@@ -3,10 +3,10 @@ from __future__ import annotations
 import ipaddress
 import os
 from pathlib import Path
-from typing import Mapping, Literal
+from typing import Any, Mapping, Literal
 from urllib.parse import urlsplit
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 MAX_APPROVED_UPLOAD_BYTES = 10 * 1024 * 1024
@@ -37,6 +37,38 @@ class Settings(BaseModel):
     maintenance_interval_seconds: int = Field(default=300, gt=0, le=86_400)
     orphan_grace_hours: int = Field(default=1, gt=0, le=24)
     workflow_manifest_path: Path = Path("workflows/hunyuan3d/workflow-manifest.json")
+    cors_allowed_origins: tuple[str, ...] = ("https://www.mangosgo.com",)
+    cors_preview_origin_enabled: bool = False
+    cors_preview_origin: str = "https://inw3d-ai-local.web.app"
+
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def parse_cors_origins(cls, value: Any) -> tuple[str, ...]:
+        if isinstance(value, str):
+            value = tuple(part.strip() for part in value.split(",") if part.strip())
+        if not isinstance(value, (tuple, list, set, frozenset)):
+            raise ValueError("CORS_ALLOWED_ORIGINS must be a comma-separated origin list")
+        origins = tuple(str(origin).strip() for origin in value if str(origin).strip())
+        if not origins:
+            raise ValueError("CORS_ALLOWED_ORIGINS must contain at least one origin")
+        for origin in origins:
+            _validate_browser_origin(origin, "CORS_ALLOWED_ORIGINS")
+        if "*" in origins:
+            raise ValueError("wildcard CORS origins are not allowed")
+        return origins
+
+    @field_validator("cors_preview_origin")
+    @classmethod
+    def validate_preview_origin(cls, value: str) -> str:
+        _validate_browser_origin(value, "CORS_PREVIEW_ORIGIN")
+        return value
+
+    @model_validator(mode="after")
+    def enforce_production_cors(self) -> "Settings":
+        if self.app_env == "production":
+            for origin in (*self.cors_allowed_origins, self.cors_preview_origin):
+                _validate_browser_origin(origin, "production CORS origin", https_only=True)
+        return self
 
     @field_validator("comfyui_base_url")
     @classmethod
@@ -64,6 +96,24 @@ class Settings(BaseModel):
         return value.rstrip("/")
 
 
+def _validate_browser_origin(value: str, name: str, *, https_only: bool = False) -> None:
+    parsed = urlsplit(value)
+    local_test_origin = parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+    if (
+        parsed.scheme not in {"https", "http"}
+        or (https_only and parsed.scheme != "https")
+        or (parsed.scheme == "http" and not local_test_origin)
+        or parsed.hostname is None
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.path not in {"", "/"}
+        or parsed.query
+        or parsed.fragment
+        or (parsed.port is not None and (https_only or not local_test_origin))
+    ):
+        raise ValueError(f"{name} must be an exact HTTPS origin without a path or port")
+
+
 _ENV_TO_FIELD = {
     "APP_ENV": "app_env",
     "GENERATION_ADAPTER": "generation_adapter",
@@ -84,6 +134,9 @@ _ENV_TO_FIELD = {
     "MAINTENANCE_INTERVAL_SECONDS": "maintenance_interval_seconds",
     "ORPHAN_GRACE_HOURS": "orphan_grace_hours",
     "WORKFLOW_MANIFEST_PATH": "workflow_manifest_path",
+    "CORS_ALLOWED_ORIGINS": "cors_allowed_origins",
+    "CORS_PREVIEW_ORIGIN_ENABLED": "cors_preview_origin_enabled",
+    "CORS_PREVIEW_ORIGIN": "cors_preview_origin",
 }
 _SECRET_MARKERS = ("SECRET", "PASSWORD", "TOKEN", "API_KEY")
 _APPLICATION_ENV_PREFIXES = (
@@ -101,6 +154,7 @@ _APPLICATION_ENV_PREFIXES = (
     "RETENTION_",
     "MIN_",
     "WORKFLOW_",
+    "CORS_",
 )
 
 

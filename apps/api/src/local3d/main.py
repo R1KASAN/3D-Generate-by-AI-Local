@@ -5,6 +5,7 @@ import asyncio
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from .adapters.generation.factory import AdapterConfigurationError, build_real_adapter
 from .api.errors import unhandled_exception_handler
@@ -58,6 +59,17 @@ def create_app(settings: Settings | None = None, service: JobService | None = No
             yield
 
     app = FastAPI(title="Local 3D Generation API", version="0.1.0", lifespan=lifespan)
+    cors_origins = list(resolved_settings.cors_allowed_origins)
+    if resolved_settings.cors_preview_origin_enabled:
+        cors_origins.append(resolved_settings.cors_preview_origin)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_methods=["GET", "POST", "OPTIONS"],
+        allow_headers=["Accept", "Content-Type", "X-Job-Token"],
+        expose_headers=["Content-Disposition"],
+        allow_credentials=False,
+    )
     app.state.job_service = job_service
     app.state.adapter_ready = adapter_ready
     app.include_router(health_router, prefix="/api/v1")

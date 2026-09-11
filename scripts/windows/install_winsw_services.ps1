@@ -3,6 +3,9 @@ param(
     [string]$ProjectRoot = '',
     [Parameter(Mandatory = $true)][string]$WinSWPath,
     [Parameter(Mandatory = $true)][ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ExpectedWinSWSha256,
+    [switch]$Feature005,
+    [string]$NginxPath = '',
+    [ValidatePattern('^[0-9a-fA-F]{64}$')][string]$ExpectedNginxSha256 = '',
     [switch]$StartServices
 )
 
@@ -16,6 +19,8 @@ if ([string]::IsNullOrWhiteSpace($ProjectRoot)) {
 $ProjectRoot = (Resolve-Path $ProjectRoot).Path
 $serviceRoot = Join-Path $ProjectRoot 'deploy\windows\services'
 $logsRoot = Join-Path $ProjectRoot 'logs'
+$nginxRoot = Join-Path $ProjectRoot 'deploy\nginx'
+$nginxServiceRoot = Join-Path $env:ProgramData 'Local3D\nginx'
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     throw 'An elevated administrator session is required to install Windows services.'
@@ -56,6 +61,19 @@ $mutablePaths = @(
     $serviceRoot,
     $logsRoot,
     $storageRoot,
+    $nginxServiceRoot,
+    (Join-Path $nginxServiceRoot 'logs'),
+    (Join-Path $nginxServiceRoot 'temp\client_body_temp'),
+    (Join-Path $nginxServiceRoot 'temp\proxy_temp'),
+    (Join-Path $nginxServiceRoot 'temp\fastcgi_temp'),
+    (Join-Path $nginxServiceRoot 'temp\uwsgi_temp'),
+    (Join-Path $nginxServiceRoot 'temp\scgi_temp'),
+    (Join-Path $nginxRoot 'logs'),
+    (Join-Path $nginxRoot 'temp\client_body_temp'),
+    (Join-Path $nginxRoot 'temp\proxy_temp'),
+    (Join-Path $nginxRoot 'temp\fastcgi_temp'),
+    (Join-Path $nginxRoot 'temp\uwsgi_temp'),
+    (Join-Path $nginxRoot 'temp\scgi_temp'),
     (Join-Path $comfyRoot 'input'),
     (Join-Path $comfyRoot 'output'),
     (Join-Path $comfyRoot 'temp'),
@@ -97,12 +115,69 @@ if ($actualHash -ne $ExpectedWinSWSha256.ToUpperInvariant()) {
     throw 'The supplied WinSW binary hash does not match the operator-provided expected hash.'
 }
 
-$services = @(
-    [PSCustomObject]@{ Id = 'Local3D-ComfyUI'; Definition = 'comfyui.xml' }
-    [PSCustomObject]@{ Id = 'Local3D-API'; Definition = 'api.xml' }
-    [PSCustomObject]@{ Id = 'Local3D-Web'; Definition = 'web.xml' }
-    [PSCustomObject]@{ Id = 'Local3D-Caddy'; Definition = 'caddy.xml' }
-)
+$legacyCaddy = $null
+$legacyCaddyWasRunning = $false
+if ($Feature005) {
+    # Nginx validates its configured listen socket. Free the loopback port
+    # before that preflight, but restore the legacy proxy if validation fails.
+    $legacyCaddy = Get-Service -Name 'Local3D-Caddy' -ErrorAction SilentlyContinue
+    if ($legacyCaddy -and $legacyCaddy.Status -ne 'Stopped') {
+        $legacyCaddyWasRunning = $true
+        Stop-Service -Name 'Local3D-Caddy' -Force
+        $legacyCaddy.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(60))
+    }
+
+    if ([string]::IsNullOrWhiteSpace($NginxPath) -or [string]::IsNullOrWhiteSpace($ExpectedNginxSha256)) {
+        throw 'Feature005 requires -NginxPath and -ExpectedNginxSha256.'
+    }
+    $nginxSource = (Resolve-Path $NginxPath).Path
+    $nginxHash = (Get-FileHash -LiteralPath $nginxSource -Algorithm SHA256).Hash
+    if ($nginxHash -ne $ExpectedNginxSha256.ToUpperInvariant()) { throw 'The supplied Nginx binary hash does not match the operator-provided expected hash.' }
+    $nginxConfig = Join-Path $nginxRoot 'nginx.conf'
+    if (-not (Test-Path -LiteralPath $nginxConfig)) { throw "Missing Nginx configuration: $nginxConfig" }
+    try {
+        & $nginxSource -t -p $nginxRoot -c $nginxConfig
+        if ($LASTEXITCODE -ne 0) { throw 'Nginx configuration validation failed.' }
+    } catch {
+        if ($legacyCaddyWasRunning) { Start-Service -Name 'Local3D-Caddy' }
+        throw
+    }
+    $nginxDestination = [IO.Path]::GetFullPath((Join-Path $serviceRoot 'nginx.exe'))
+    if (-not [StringComparer]::OrdinalIgnoreCase.Equals(
+        [IO.Path]::GetFullPath($nginxSource),
+        $nginxDestination
+    )) {
+        Copy-Item -LiteralPath $nginxSource -Destination $nginxDestination -Force
+    }
+    Copy-Item -LiteralPath $nginxConfig -Destination (Join-Path $nginxServiceRoot 'nginx.conf') -Force
+
+    $nginxMimeTypes = Join-Path $nginxRoot 'mime.types'
+    if (-not (Test-Path -LiteralPath $nginxMimeTypes)) {
+        throw "Missing Nginx MIME type configuration: $nginxMimeTypes"
+    }
+    Copy-Item -LiteralPath $nginxMimeTypes -Destination (Join-Path $nginxServiceRoot 'mime.types') -Force
+
+    $nginxErrors = Join-Path $nginxRoot 'errors'
+    if (-not (Test-Path -LiteralPath $nginxErrors)) {
+        throw "Missing Nginx error pages: $nginxErrors"
+    }
+    Copy-Item -LiteralPath $nginxErrors -Destination (Join-Path $nginxServiceRoot 'errors') -Recurse -Force
+}
+
+$services = if ($Feature005) {
+    @(
+        [PSCustomObject]@{ Id = 'Local3D-ComfyUI'; Definition = 'comfyui.xml' }
+        [PSCustomObject]@{ Id = 'Local3D-API'; Definition = 'api.xml' }
+        [PSCustomObject]@{ Id = 'Local3D-Nginx'; Definition = 'nginx.xml' }
+    )
+} else {
+    @(
+        [PSCustomObject]@{ Id = 'Local3D-ComfyUI'; Definition = 'comfyui.xml' }
+        [PSCustomObject]@{ Id = 'Local3D-API'; Definition = 'api.xml' }
+        [PSCustomObject]@{ Id = 'Local3D-Web'; Definition = 'web.xml' }
+        [PSCustomObject]@{ Id = 'Local3D-Caddy'; Definition = 'caddy.xml' }
+    )
+}
 
 # Service-account and dependency changes are install-time settings in WinSW v2.
 # Remove an earlier installation in reverse dependency order before reinstalling.
@@ -141,6 +216,10 @@ foreach ($service in $services) {
     Copy-Item -LiteralPath $definitionPath -Destination (Join-Path $serviceRoot "$($service.Id).xml") -Force
     & $wrapperPath install | Out-Host
     if ($LASTEXITCODE -ne 0) { throw "WinSW install failed for $($service.Id)." }
+}
+
+if ($Feature005 -and $legacyCaddy) {
+    Set-Service -Name 'Local3D-Caddy' -StartupType Disabled
 }
 
 if ($StartServices) {

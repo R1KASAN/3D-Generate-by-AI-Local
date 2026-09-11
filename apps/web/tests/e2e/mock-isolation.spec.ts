@@ -2,6 +2,7 @@ import { expect, test } from "@playwright/test";
 import path from "node:path";
 
 const fixture = path.resolve(__dirname, "../../../../fixtures/inputs/valid-reference.png");
+const apiOrigin = "http://127.0.0.1:18000";
 
 type StoredJob = { job_id: string; job_token: string };
 
@@ -9,12 +10,20 @@ async function storedJob(page: import("@playwright/test").Page): Promise<StoredJ
   await expect
     .poll(() =>
       page.evaluate(() => {
-        const raw = window.sessionStorage.getItem("local3d:last-job");
+        const key = Object.keys(window.sessionStorage).find((candidate) =>
+          candidate.startsWith("local3d:last-job:"),
+        );
+        const raw = key ? window.sessionStorage.getItem(key) : null;
         return raw ? (JSON.parse(raw) as StoredJob).job_id : null;
       }),
     )
     .not.toBeNull();
-  return page.evaluate(() => JSON.parse(window.sessionStorage.getItem("local3d:last-job")!) as StoredJob);
+  return page.evaluate(() => {
+    const key = Object.keys(window.sessionStorage).find((candidate) =>
+      candidate.startsWith("local3d:last-job:"),
+    );
+    return JSON.parse(window.sessionStorage.getItem(key!)!) as StoredJob;
+  });
 }
 
 test("independent sessions keep queue, token, activation, and result isolation", async ({ browser }) => {
@@ -54,7 +63,7 @@ test("independent sessions keep queue, token, activation, and result isolation",
   expect(first.job_token).not.toBe(second.job_token);
   expect(firstSubmissions).toBe(1);
 
-  const swapped = await firstContext.request.get(`/api/v1/jobs/${second.job_id}`, {
+  const swapped = await firstContext.request.get(`${apiOrigin}/api/v1/jobs/${second.job_id}`, {
     headers: { "X-Job-Token": first.job_token },
   });
   expect(swapped.status()).toBe(404);
@@ -64,16 +73,16 @@ test("independent sessions keep queue, token, activation, and result isolation",
   await expect(secondPage.getByRole("status")).toContainText("completed", { timeout: 20_000 });
 
   const [firstModel, firstDownload, secondModel, secondDownload] = await Promise.all([
-    firstContext.request.get(`/api/v1/jobs/${first.job_id}/model`, {
+    firstContext.request.get(`${apiOrigin}/api/v1/jobs/${first.job_id}/model`, {
       headers: { "X-Job-Token": first.job_token },
     }),
-    firstContext.request.get(`/api/v1/jobs/${first.job_id}/download`, {
+    firstContext.request.get(`${apiOrigin}/api/v1/jobs/${first.job_id}/download`, {
       headers: { "X-Job-Token": first.job_token },
     }),
-    secondContext.request.get(`/api/v1/jobs/${second.job_id}/model`, {
+    secondContext.request.get(`${apiOrigin}/api/v1/jobs/${second.job_id}/model`, {
       headers: { "X-Job-Token": second.job_token },
     }),
-    secondContext.request.get(`/api/v1/jobs/${second.job_id}/download`, {
+    secondContext.request.get(`${apiOrigin}/api/v1/jobs/${second.job_id}/download`, {
       headers: { "X-Job-Token": second.job_token },
     }),
   ]);

@@ -5,17 +5,17 @@ import { useEffect, useState } from "react";
 import { GenerationForm } from "../components/generation-form";
 import { GenerationResult } from "../components/generation-result";
 import { JobCreated } from "../lib/api/jobs";
-
-const JOB_STORAGE_KEY = "local3d:last-job";
+import { getPublicRuntimeConfig } from "../lib/config/public-runtime";
+import { readStoredJob, writeStoredJob } from "../lib/jobs/job-storage";
 
 export default function HomePage() {
   const [job, setJob] = useState<JobCreated | null>(null);
+  const runtime = getPublicRuntimeConfig();
 
   useEffect(() => {
     try {
-      const stored = window.sessionStorage.getItem(JOB_STORAGE_KEY);
-      if (stored) {
-        const restored = JSON.parse(stored) as JobCreated;
+      const restored = readStoredJob();
+      if (restored) {
         window.setTimeout(() => setJob(restored), 0);
       }
     } catch {
@@ -24,19 +24,23 @@ export default function HomePage() {
   }, []);
 
   useEffect(() => {
-    if (job) window.sessionStorage.setItem(JOB_STORAGE_KEY, JSON.stringify(job));
+    if (job) writeStoredJob(job);
   }, [job]);
 
   function handleCreated(created: JobCreated) {
     setJob(created);
-    window.sessionStorage.setItem(JOB_STORAGE_KEY, JSON.stringify(created));
+    writeStoredJob(created);
   }
 
   return (
     <main>
       <h1>Local 3D Generator</h1>
-      <aside role="note" aria-label="Test service notice">
-        Temporary non-production test service. The test URL is public and is not authentication.
+      <aside role="note" aria-label={runtime.production ? "Production service notice" : "Test service notice"}>
+        {runtime.production
+          ? "Production AI service. Keep your job link private; the job token is capability-based access."
+          : runtime.deploymentEnv === "preview" || runtime.deploymentEnv === "firebase-preview"
+            ? "Firebase preview. AI access is enabled only when the API administrator explicitly allows this origin."
+            : "Temporary non-production test service. The test URL is public and is not authentication."}
       </aside>
       <p>Upload one reference image to generate a textured GLB.</p>
       <GenerationForm onCreated={handleCreated} />
